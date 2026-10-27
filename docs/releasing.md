@@ -9,16 +9,27 @@ updater (fail-closed on a checksum mismatch) unable to update at all.
 
 ## Steps
 
-**1. Bump the version in the three places that must match.**
+**1. Bump the version, then make the tag equal it.**
 
-- `src/iPASide.Flutter/pubspec.yaml` (`version: X.Y.Z+N`)
-- `src/iPASide.Flutter/lib/app_version.dart` (`kAppVersion`)
-- `packaging/build-installer.ps1` (default `-Version`)
+The tag (without the `v`) must equal the version in:
 
-`src/iPASide.Engine/ipaside_engine/__init__.py` (`__version__`) carries the same
-number. Date the `CHANGELOG.md` entry, and commit.
+- `src/iPASide.Flutter/pubspec.yaml` (`version: X.Y.Z+N`, the part before `+`)
+- `src/iPASide.Engine/ipaside_engine/__init__.py` (`__version__`)
 
-**2. Tag and push the tag.**
+CI fails the run before building anything when either differs from the tag. Keep
+`src/iPASide.Flutter/lib/app_version.dart` (`kAppVersion`) equal to the pubspec
+version too (a test checks that). The default `-Version` in
+`packaging/build-installer.ps1` is only for local builds; CI ignores it. Date the
+`CHANGELOG.md` entry, and commit.
+
+A tag containing `-` (for example `v1.1.0-beta1`) is published as a pre-release.
+
+**2. Test the branch build, then tag.**
+
+The release goes straight to every installed EZSide: the in-app updater sees it as
+soon as the release job finishes. So before tagging, download the `EZSide-installer`
+artifact from the branch's CI run and install it on a device. Then tag and push the
+tag.
 
 ```powershell
 git tag -a vX.Y.Z -m "EZSide X.Y.Z"
@@ -26,8 +37,9 @@ git push origin vX.Y.Z
 ```
 
 **3. CI publishes.** The workflow runs the engine and app tests, builds the
-installer on a clean machine, then the `release` job creates (or updates) the
-release for the tag with `EZSide-Setup-X.Y.Z-x64.exe` and `SHA256SUMS.txt`.
+installer on a clean machine, then the `release` job creates the
+release for the tag with `EZSide-Setup-X.Y.Z-x64.exe` and `SHA256SUMS.txt`. It
+refuses to overwrite: if the release already has assets, the run fails.
 Watch the run under the repository's Actions tab.
 
 ## After the release
@@ -41,9 +53,9 @@ gh release download vX.Y.Z --repo brooklyn96/EZSide
 Get-Content SHA256SUMS.txt
 ```
 
-A CI-built installer has never been driven against a real iPhone by CI itself, so
-install it on a device before telling anyone about the release. The data folder
-`%LOCALAPPDATA%\EZSide` must survive an uninstall.
+CI has never driven an installer against a real iPhone, which is why the device
+test happens before the tag (step 2): once published, users get it immediately. The
+data folder `%LOCALAPPDATA%\EZSide` must survive an uninstall.
 
 ## Re-cutting a release
 

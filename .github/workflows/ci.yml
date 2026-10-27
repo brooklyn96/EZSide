@@ -69,6 +69,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The release is named after the tag, but the running app reports its own compiled-in
+      # version. If they differ, every installed copy installs the update, restarts, still sees
+      # an older version and is offered the same update forever. So a tag must equal the app
+      # version, and this fails the run before any installer is built.
+      - name: Check the tag matches the app version
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pub="$(sed -n 's/^version:[[:space:]]*\([^+[:space:]]*\).*/\1/p' src/iPASide.Flutter/pubspec.yaml | head -n1)"
+          eng="$(sed -n 's/^__version__[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' src/iPASide.Engine/ipaside_engine/__init__.py | head -n1)"
+          echo "tag=$tag pubspec=$pub engine=$eng"
+          if [ -z "$pub" ] || [ -z "$eng" ] || [ "$tag" != "$pub" ] || [ "$tag" != "$eng" ]; then
+            echo "::error::Tag v$tag must equal version in pubspec.yaml ($pub) and ipaside_engine/__init__.py ($eng). Bump them, then re-tag."
+            exit 1
+          fi
+
       - uses: subosito/flutter-action@v2
         with:
           flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -145,7 +162,10 @@ jobs:
           name: EZSide-installer
           path: dist/installer
 
-      - name: Create or update the GitHub release
+      # Never overwrites: a release that already has assets may be installed on real machines,
+      # and replacing the exe and the sums one after the other would break the updater between
+      # the two uploads. To re-cut a version, delete its release and tag first (docs/releasing.md).
+      - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -155,9 +175,15 @@ jobs:
           sums="dist/installer/SHA256SUMS.txt"
           test -f "$setup"
           test -f "$sums"
-          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release upload "$tag" "$setup" "$sums" --clobber --repo "$GITHUB_REPOSITORY"
+          pre=""
+          case "$ver" in *-*) pre="--prerelease" ;; esac
+          if existing="$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets | length' 2>/dev/null)"; then
+            if [ "$existing" != "0" ]; then
+              echo "::error::Release $tag already has $existing asset(s). Refusing to overwrite. Delete the release and tag first, or ship a new version."
+              exit 1
+            fi
+            gh release upload "$tag" "$setup" "$sums" --repo "$GITHUB_REPOSITORY"
           else
-            gh release create "$tag" "$setup" "$sums" --verify-tag \
+            gh release create "$tag" "$setup" "$sums" --verify-tag $pre \
               --title "EZSide $ver" --notes "EZSide $ver" --repo "$GITHUB_REPOSITORY"
           fi

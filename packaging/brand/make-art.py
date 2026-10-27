@@ -1,4 +1,4 @@
-r"""Generates iPASide's installer artwork from the app's own design tokens.
+r"""Generates EZSide's installer artwork from the app's own design tokens.
 
 The PNGs this writes are committed next to it, so building the installer never needs
 Python. The script exists so the art can be regenerated when the brand changes,
@@ -32,7 +32,9 @@ MUTED = (0x8B, 0x8B, 0x99)
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
-MARK = REPO / "src" / "iPASide.Flutter" / "assets" / "brand" / "mark.png"
+# The 512px master (cut from mark-source.png by packaging/make-icon.py). assets/brand/mark.png
+# is only the 26px in-app copy and goes soft when scaled up to the installer art.
+MARK = REPO / "docs" / "brand" / "icon.png"
 FONTS = REPO / "src" / "iPASide.Flutter" / "assets" / "fonts"
 
 
@@ -122,7 +124,7 @@ def build_panel() -> Image.Image:
     img.alpha_composite(mark, (74, 168))
 
     draw = ImageDraw.Draw(img)
-    draw.text((74, 372), "iPASide", font=font("Inter-Bold.ttf", 66), fill=TEXT)
+    draw.text((74, 372), "EZSide", font=font("Inter-Bold.ttf", 66), fill=TEXT)
     img.alpha_composite(accent_rule(168, 4), (76, 470))
     draw.text(
         (74, 508),
