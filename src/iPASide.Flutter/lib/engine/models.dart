@@ -961,8 +961,6 @@ class LiveContainerStatus {
     this.certificatePending = false,
     this.certificateFilePresent = false,
     this.launched = false,
-    this.hasSidestore = false,
-    this.pairingPresent = false,
   });
 
   /// Parses a `livecontainer` payload.
@@ -975,8 +973,6 @@ class LiveContainerStatus {
         certificatePending: jsonBool(json, 'certificate_pending'),
         certificateFilePresent: jsonBool(json, 'certificate_file_present'),
         launched: jsonBool(json, 'launched'),
-        hasSidestore: jsonBool(json, 'has_sidestore'),
-        pairingPresent: jsonBool(json, 'pairing_present'),
       );
 
   /// Whether LiveContainer is on the device at all.
@@ -1001,15 +997,6 @@ class LiveContainerStatus {
   /// Whether LiveContainer has ever been opened; it builds its folders then.
   final bool launched;
 
-  /// Whether this build carries SideStore, so the phone can refresh apps itself.
-  ///
-  /// Read from the IPA the refresh registry recorded, because the frameworks that would
-  /// prove it live in the app bundle, which `house_arrest` does not vend.
-  final bool hasSidestore;
-
-  /// Whether the pairing file on-device refresh needs has reached the device.
-  final bool pairingPresent;
-
   /// Installed, opened, and no import still waiting.
   bool get isReady => installed && launched && !certificatePending;
 
@@ -1023,14 +1010,11 @@ class LiveContainerStatus {
           other.version == version &&
           other.certificatePending == certificatePending &&
           other.certificateFilePresent == certificateFilePresent &&
-          other.launched == launched &&
-          other.hasSidestore == hasSidestore &&
-          other.pairingPresent == pairingPresent;
+          other.launched == launched;
 
   @override
   int get hashCode => Object.hash(installed, bundleId, name, version,
-      certificatePending, certificateFilePresent, launched, hasSidestore,
-      pairingPresent);
+      certificatePending, certificateFilePresent, launched);
 
   @override
   String toString() => 'LiveContainerStatus(installed: $installed, '
@@ -2387,202 +2371,6 @@ class SideloadProgress {
   @override
   String toString() => 'SideloadProgress(phase: $phase, percent: $percent, '
       'step: $step, bundleId: $bundleId)';
-}
-
-/// The one jailbreak iPASide offers to install: Dopamine.
-///
-/// Descriptive metadata the engine's catalog carries, so the UI names the tool, its
-/// author and its project page without hardcoding them on the Dart side.
-class JailbreakTool {
-  /// Creates a tool descriptor.
-  const JailbreakTool({
-    this.id,
-    this.name,
-    this.kind,
-    this.developer,
-    this.projectUrl,
-    this.knownVersion,
-  });
-
-  /// Parses a `tool` object from a `jailbreak` advise payload.
-  factory JailbreakTool.fromJson(Map<String, dynamic> json) => JailbreakTool(
-        id: jsonString(json, 'id'),
-        name: jsonString(json, 'name'),
-        kind: jsonString(json, 'kind'),
-        developer: jsonString(json, 'developer'),
-        projectUrl: jsonString(json, 'project_url'),
-        knownVersion: jsonString(json, 'known_version'),
-      );
-
-  /// Stable identifier, e.g. `dopamine`.
-  final String? id;
-
-  /// Display name, e.g. `Dopamine`.
-  final String? name;
-
-  /// One-line kind, e.g. `Semi-untethered · rootless`.
-  final String? kind;
-
-  /// Who makes it, e.g. `opa334 (Lars Fröder)`.
-  final String? developer;
-
-  /// The project's home page.
-  final String? projectUrl;
-
-  /// The newest version the catalog knows of, for display only.
-  final String? knownVersion;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is JailbreakTool &&
-          other.id == id &&
-          other.name == name &&
-          other.kind == kind &&
-          other.developer == developer &&
-          other.projectUrl == projectUrl &&
-          other.knownVersion == knownVersion;
-
-  @override
-  int get hashCode =>
-      Object.hash(id, name, kind, developer, projectUrl, knownVersion);
-
-  @override
-  String toString() => 'JailbreakTool(id: $id, name: $name)';
-}
-
-/// Whether a jailbreak fits the connected device, and why.
-///
-/// The engine resolves the device's chip from its `ProductType` and compares the
-/// running iOS against the tool's support matrix; this is the parsed answer.
-class JailbreakAdvice {
-  /// Creates an advice snapshot.
-  const JailbreakAdvice({
-    required this.tool,
-    this.productType,
-    this.deviceName,
-    this.chip,
-    this.iosVersion,
-    this.maxSupported,
-    this.outcome,
-    this.summary,
-    this.canInstall = false,
-  });
-
-  /// Parses a `jailbreak` (advise) payload.
-  factory JailbreakAdvice.fromJson(Map<String, dynamic> json) => JailbreakAdvice(
-        tool: JailbreakTool.fromJson(jsonObject(json, 'tool')),
-        productType: jsonString(json, 'product_type'),
-        deviceName: jsonString(json, 'device_name'),
-        chip: jsonString(json, 'chip'),
-        iosVersion: jsonString(json, 'ios_version'),
-        maxSupported: jsonString(json, 'max_supported'),
-        outcome: jsonString(json, 'outcome'),
-        summary: jsonString(json, 'summary'),
-        canInstall: jsonBool(json, 'can_install'),
-      );
-
-  /// The tool this advice is about.
-  final JailbreakTool tool;
-
-  /// The device's model identifier, e.g. `iPhone12,1`.
-  final String? productType;
-
-  /// A marketing name when known, e.g. `iPhone 11`.
-  final String? deviceName;
-
-  /// The resolved chip family, e.g. `A13`.
-  final String? chip;
-
-  /// The device's running iOS version.
-  final String? iosVersion;
-
-  /// The newest iOS this chip is supported on, when applicable.
-  final String? maxSupported;
-
-  /// One of the engine's outcome constants: `supported`, `unsupported_version`,
-  /// `no_jailbreak`, `older_unverified`, `unknown_device`.
-  final String? outcome;
-
-  /// One human-readable line describing the outcome.
-  final String? summary;
-
-  /// True only when the device can be installed to right now.
-  final bool canInstall;
-
-  /// Whether the device is fully supported.
-  bool get isSupported => outcome == 'supported';
-
-  /// Whether the chip has no public jailbreak at all (iPhone 16/17 families).
-  bool get hasNoJailbreak => outcome == 'no_jailbreak';
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is JailbreakAdvice &&
-          other.tool == tool &&
-          other.productType == productType &&
-          other.deviceName == deviceName &&
-          other.chip == chip &&
-          other.iosVersion == iosVersion &&
-          other.maxSupported == maxSupported &&
-          other.outcome == outcome &&
-          other.summary == summary &&
-          other.canInstall == canInstall;
-
-  @override
-  int get hashCode => Object.hash(tool, productType, deviceName, chip,
-      iosVersion, maxSupported, outcome, summary, canInstall);
-
-  @override
-  String toString() =>
-      'JailbreakAdvice(outcome: $outcome, chip: $chip, canInstall: $canInstall)';
-}
-
-/// The outcome of installing a jailbreak (an ordinary sideload underneath).
-class JailbreakInstallResult {
-  /// Creates an install outcome.
-  const JailbreakInstallResult({this.status, this.name, this.bundleId, this.version});
-
-  /// Parses a `jailbreak --install` payload.
-  factory JailbreakInstallResult.fromJson(Map<String, dynamic> json) =>
-      JailbreakInstallResult(
-        status: jsonString(json, 'status'),
-        name: jsonString(json, 'name'),
-        bundleId: jsonString(json, 'bundle_id'),
-        version: jsonString(json, 'dopamine_version'),
-      );
-
-  /// `installed` on success.
-  final String? status;
-
-  /// Display name the tool was installed under.
-  final String? name;
-
-  /// Bundle identifier it was installed under.
-  final String? bundleId;
-
-  /// The Dopamine version that was installed, when it was downloaded.
-  final String? version;
-
-  /// Whether the install landed on the device.
-  bool get isInstalled => status == 'installed';
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is JailbreakInstallResult &&
-          other.status == status &&
-          other.name == name &&
-          other.bundleId == bundleId &&
-          other.version == version;
-
-  @override
-  int get hashCode => Object.hash(status, name, bundleId, version);
-
-  @override
-  String toString() =>
-      'JailbreakInstallResult(status: $status, bundleId: $bundleId)';
 }
 
 // Base64 icons are hundreds of kilobytes; never let one into a log line.

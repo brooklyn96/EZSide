@@ -27,7 +27,6 @@ import 'viewmodels/account_selection.dart';
 import 'viewmodels/apple_support_view_model.dart';
 import 'viewmodels/device_selection.dart';
 import 'viewmodels/drop_router.dart';
-import 'viewmodels/jailbreak_view_model.dart';
 import 'viewmodels/navigation_state.dart';
 import 'viewmodels/live_container_view_model.dart';
 import 'viewmodels/sideload_view_model.dart';
@@ -202,16 +201,6 @@ class _IpaSideAppState extends State<IpaSideApp> with WindowListener {
     dialogs: _dialogs,
   );
 
-  /// App-scoped for the same reason as the LiveContainer session: installing a
-  /// jailbreak is a download, a sign and an install, and navigating away mid-run must
-  /// not throw the progress or the outcome away.
-  late final JailbreakViewModel _jailbreak = JailbreakViewModel(
-    engine: _engine,
-    navigation: _navigation,
-    settings: widget.settings,
-    devices: _devices,
-  );
-
   late final DropRouter _dropRouter = DropRouter(
     navigation: _navigation,
     target: _sideload,
@@ -256,7 +245,6 @@ class _IpaSideAppState extends State<IpaSideApp> with WindowListener {
     _dropRouter.dispose();
     _sideload.dispose();
     _liveContainer.dispose();
-    _jailbreak.dispose();
     _appleSupport.dispose();
     _devices.dispose();
     _navigation.dispose();
@@ -291,7 +279,6 @@ class _IpaSideAppState extends State<IpaSideApp> with WindowListener {
         ChangeNotifierProvider<LiveContainerViewModel>.value(
           value: _liveContainer,
         ),
-        ChangeNotifierProvider<JailbreakViewModel>.value(value: _jailbreak),
         ChangeNotifierProvider<DropRouter>.value(value: _dropRouter),
         ChangeNotifierProvider<UpdateViewModel>.value(value: _updates),
       ],

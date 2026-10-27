@@ -30,7 +30,6 @@ from . import (
     doctor,
     gsa,
     ipa,
-    jailbreak,
     livecontainer,
     lockdown,
     pairing,
@@ -43,18 +42,6 @@ from . import (
 from .errors import EngineError
 
 _STATUS_GLYPH = {"ok": "[ OK ]", "warn": "[WARN]", "fail": "[FAIL]"}
-
-# SideStore runs an iOS Shortcut by this exact name after a refresh, to drop the local
-# tunnel it needed. The name is hardcoded in SideStore, and when no such Shortcut exists
-# the Shortcuts app opens with "could not find the shortcut". The refresh still completes -
-# it is noise, not a failure - but it is alarming noise, and only the user can fix it:
-# Shortcuts cannot be created from a PC.
-SIDESTORE_SHORTCUT_NOTE = (
-    "SideStore also runs an iOS Shortcut named exactly 'TurnOffData' when it finishes, to "
-    "disconnect the local tunnel. If you have not made one, Shortcuts will open with an "
-    "error - the refresh still worked. Create a Shortcut with that name containing a "
-    "disconnect-VPN action to silence it."
-)
 
 
 def _enable_fault_handler() -> None:
@@ -498,7 +485,7 @@ def _cmd_livecontainer(args: argparse.Namespace) -> int:
 
     if args.download and not args.setup:
         result = livecontainer.download(
-            args.dir, variant=args.variant, on_progress=_progress_to_stderr()
+            args.dir, on_progress=_progress_to_stderr()
         )
         if args.json:
             _emit(args, result)
@@ -510,7 +497,7 @@ def _cmd_livecontainer(args: argparse.Namespace) -> int:
         ipa_path = args.ipa
         if not ipa_path:
             ipa_path = livecontainer.download(
-                args.dir, variant=args.variant, on_progress=_progress_to_stderr()
+                args.dir, on_progress=_progress_to_stderr()
             )["path"]
         result = livecontainer.setup(
             ipa_path,
@@ -536,21 +523,6 @@ def _cmd_livecontainer(args: argparse.Namespace) -> int:
         else:
             print(f"The certificate could not be delivered: {certificate.get('error')}")
             print(certificate["instructions"])
-
-        pairing = result.get("pairing") or {}
-        if result.get("has_sidestore"):
-            if pairing.get("paired"):
-                print(
-                    "This build carries SideStore, and it has been given this PC's "
-                    "pairing file, so it can refresh apps on the phone itself."
-                )
-            else:
-                print(
-                    "This build carries SideStore, but the pairing file could not be "
-                    f"delivered ({pairing.get('error')}), so on-device refresh will not "
-                    "work until it is."
-                )
-            print(f"  {SIDESTORE_SHORTCUT_NOTE}")
         return 0
 
     result = livecontainer.status(args.udid)
@@ -573,99 +545,6 @@ def _cmd_livecontainer(args: argparse.Namespace) -> int:
     for guest in guests:
         print(f"      {guest['bundle_id']}")
     return 0
-
-
-_JAILBREAK_ERRORS = (
-    jailbreak.JailbreakError,
-    gsa.GsaError,
-    developer.DeveloperServicesError,
-    signing.SigningError,
-    sideload.SideloadError,
-    device.DeviceError,
-    ValueError,
-)
-
-
-def _jailbreak_advice(args: argparse.Namespace) -> tuple[dict[str, Any], str]:
-    """Evaluate one device and pin its resolved UDID for any following install."""
-    compat = jailbreak.fetch_compat()
-    try:
-        info = device.get_device_info(args.udid)
-    except device.DeviceError:
-        raise
-    except Exception as exc:  # noqa: BLE001 - usbmuxd down, device locked, refused
-        raise jailbreak.JailbreakError(
-            "Couldn't read the device. Connect an iPhone over USB, unlock it and "
-            "trust this computer, then try again."
-        ) from exc
-    resolved_udid = info.get("UniqueDeviceID") or args.udid
-    if not isinstance(resolved_udid, str) or not resolved_udid:
-        raise jailbreak.JailbreakError(
-            "Couldn't identify the connected device. Reconnect it over USB and try again."
-        )
-    advice = jailbreak.advise(
-        info.get("ProductType"),
-        info.get("ProductVersion"),
-        compat,
-        info.get("BuildVersion"),
-    )
-    return advice, resolved_udid
-
-
-def _cmd_jailbreak(args: argparse.Namespace) -> int:
-    """Advise on jailbreak compatibility, or download / install Dopamine.
-
-    With no flags it reads the connected device and reports whether Dopamine fits it.
-    ``--install`` signs and installs Dopamine (downloading the latest IPA unless ``--ipa``
-    is given); ``--download`` only fetches the IPA.
-    """
-    try:
-        if args.download and not args.install:
-            result = jailbreak.download(args.dir, on_progress=_progress_to_stderr())
-            if args.json:
-                _emit(args, result)
-            else:
-                print(f"Downloaded {result['asset_name']} ({result['version']}) to {result['path']}")
-            return 0
-
-        if args.install:
-            advice, resolved_udid = _jailbreak_advice(args)
-            if not advice.get("can_install"):
-                raise jailbreak.JailbreakError(
-                    str(advice.get("summary") or "Dopamine does not support this device.")
-                )
-            result = jailbreak.install(
-                resolved_udid,
-                ipa_path=args.ipa,
-                keep_signed=args.keep_signed,
-                signed_dir=args.signed_dir,
-                on_progress=_progress_to_stderr(),
-            )
-            if args.json:
-                _emit(args, result)
-            else:
-                print(f"Installed {jailbreak.TOOL['name']} ({result['bundle_id']}).")
-                print(
-                    "Open it on your iPhone to run the jailbreak. EZSide will refresh it "
-                    "before its 7-day profile expires."
-                )
-            return 0
-
-        # Default: advise on the connected device. The compatibility list is fetched
-        # live (no bundled fallback), so a network failure here surfaces as an error the
-        # UI answers with a Retry button.
-        advice, _resolved_udid = _jailbreak_advice(args)
-        if args.json:
-            _emit(args, advice)
-        else:
-            print(advice["summary"])
-        return 0
-    except _JAILBREAK_ERRORS as exc:
-        if args.json:
-            _emit(args, {"status": "error", "error": str(exc)})
-        else:
-            print(f"Jailbreak command failed: {exc}")
-        return 1
 
 
 def _cmd_installs(args: argparse.Namespace) -> int:
@@ -1300,7 +1179,6 @@ _HANDLERS = {
     "sideload": _cmd_sideload,
     "pairing": _cmd_pairing,
     "livecontainer": _cmd_livecontainer,
-    "jailbreak": _cmd_jailbreak,
     "installs": _cmd_installs,
     "refresh": _cmd_refresh,
     "signed": _cmd_signed,
@@ -1581,11 +1459,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="leave the .p12 for LiveContainer's own Settings instead of importing it",
     )
     lc_parser.add_argument(
-        "--variant", choices=livecontainer.VARIANTS, default=livecontainer.VARIANT_SIDESTORE,
-        help="which build to fetch: 'sidestore' carries a store that can refresh on the "
-             "phone itself, 'plain' is smaller and cannot (default: sidestore)",
-    )
-    lc_parser.add_argument(
         "--apps", action="store_true",
         help="list the apps running inside LiveContainer (these use no app slots)",
     )
@@ -1596,26 +1469,6 @@ def build_parser() -> argparse.ArgumentParser:
     lc_parser.add_argument(
         "--remove", default=None, metavar="BUNDLE_ID",
         help="remove an app from inside LiveContainer",
-    )
-
-    jb_parser = sub.add_parser(
-        "jailbreak", parents=[common, target, signed_output],
-        help="check jailbreak compatibility, or download / install Dopamine",
-    )
-    jb_parser.add_argument(
-        "--install", action="store_true",
-        help="sign + install Dopamine (downloads the latest IPA unless --ipa is given)",
-    )
-    jb_parser.add_argument(
-        "--download", action="store_true", help="download the latest Dopamine IPA only",
-    )
-    jb_parser.add_argument(
-        "--ipa", default=None,
-        help="Dopamine .ipa to install (default: download the latest release)",
-    )
-    jb_parser.add_argument(
-        "--dir", default=None,
-        help="folder for the downloaded IPA (default: the app's downloads folder)",
     )
 
     sub.add_parser("installs", parents=[common], help="list apps EZSide has sideloaded (with expiry)")

@@ -29,8 +29,6 @@ from __future__ import annotations
 
 import asyncio
 import plistlib
-import shutil
-import tempfile
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any, Callable
@@ -47,8 +45,8 @@ BUNDLE_PREFIX = "com.kdt.livecontainer"
 #: keychain groups by index, so a short list silently breaks apps that use the keychain.
 KEYCHAIN_GROUPS = 128
 
-#: LiveContainer looks for a store's app group and uses the first it can reach, so both
-#: are provisioned and signed in - it decides which at runtime.
+#: LiveContainer looks for the app group of an AltStore-family store and uses the first it
+#: can reach, so both are provisioned and signed in - it decides which at runtime.
 _GROUP_PREFIXES = (
     "group.com.SideStore.SideStore.",
     "group.com.rileytestut.AltStore.",
@@ -66,38 +64,7 @@ CERTIFICATE_NAME = "iPASide-certificate.p12"
 #: Reachable over house_arrest, which is what lets iPASide put an app there directly.
 GUEST_APPS_DIR = "/Documents/Applications"
 
-#: SideStore's container, virtualised by LiveContainer as one of its guest apps.
-SIDESTORE_DOCUMENTS = "/Documents/SideStore/Documents"
-
-#: What SideStore and AltStore call a pairing file. Placed in SideStore's own Documents so
-#: it is found on launch, and in LiveContainer's, which the Files app exposes, so it can
-#: still be picked by hand if the first location ever stops being right.
-PAIRING_NAME = "ALTPairingFile.mobiledevicepairing"
-
-#: Where usbmux keeps the pairing records this PC has for its devices.
-_LOCKDOWN_DIR = Path(r"C:\ProgramData\Apple\Lockdown")
-
-#: The SideStore bundled inside the +SideStore build, and the files it reads on first
-#: launch to import a signing certificate without the user having to sign in. Named and
-#: placed to AltStore/SideStore's own convention, the same one iLoader's isideload uses.
-SIDESTORE_FRAMEWORK = "SideStoreApp.framework"
-ALT_CERTIFICATE_FILE = "ALTCertificate.p12"
-_ALT_CERTIFICATE_ID_KEY = "ALTCertificateID"
-_ALT_APP_GROUPS_KEY = "ALTAppGroups"
-
-#: Release builds. The SideStore one carries a whole store inside the same bundle id, so
-#: it costs no extra app slot, and its refresh is exposed as an App Intent - meaning a
-#: Shortcut can run it on a schedule with no PC involved.
-VARIANT_SIDESTORE = "sidestore"
-VARIANT_PLAIN = "plain"
-VARIANTS = (VARIANT_SIDESTORE, VARIANT_PLAIN)
-
 #: Name of the signing profile :mod:`ipaside_engine.sideload` resolves for LiveContainer.
-#:
-#: One name for both builds. Whether a pairing file is needed is read from the IPA being
-#: signed, not from this - see :func:`has_sidestore`. Encoding it in the name would put a
-#: label in the refresh registry that a record written by an older build does not carry,
-#: and a refresh would then quietly stop delivering the pairing file.
 SIGNING_PROFILE = "livecontainer"
 
 _TIMEOUTS = (20, 60)
@@ -148,94 +115,15 @@ def is_livecontainer(info: dict[str, Any]) -> bool:
     return str(info.get("bundle_id") or "").startswith(BUNDLE_PREFIX)
 
 
-def seed_sidestore_certificate(ipa_path: str, bundle: dict[str, Any], dest_dir: str) -> str:
-    """Bake iPASide's certificate into the bundled SideStore, before the IPA is signed.
-
-    SideStore imports a certificate it finds in its own bundle on first launch, which is
-    how a store gets a signing identity without the user typing an Apple ID into it. iLoader
-    does the same; the convention (confirmed against isideload) is, inside
-    ``Frameworks/SideStoreApp.framework``:
-
-    * ``ALTCertificate.p12`` - the identity, encrypted with the certificate's Apple
-      ``machineId`` as its password;
-    * ``Info.plist`` gains ``ALTCertificateID`` (the serial) and ``ALTAppGroups`` (the
-      shared app group).
-
-    Seeding it with *iPASide's own* certificate is the point: SideStore then refreshes
-    under the same identity that installed LiveContainer, so the phone can renew apps on
-    its own and there is no separate Apple ID to sign into - which is also the one way to
-    end up with a second, conflicting LiveContainer.
-
-    Returns the path to a new IPA, written under ``dest_dir``. Must run before signing:
-    the files have to be inside the bundle when zsign builds its code-signature manifest,
-    or iOS rejects the framework for having contents the signature does not cover.
-    """
-    key_pem, cert_der, serial = provision.signing_identity()
-    machine_id = provision.certificate_machine_id(bundle["team_id"], serial)
-    alt_p12 = signing.build_p12(cert_der, key_pem, password=machine_id)
-    group = app_group_identifiers(bundle["team_id"])[0]
-
-    work = Path(tempfile.mkdtemp(prefix="ipaside_ss_", dir=dest_dir))
-    try:
-        with zipfile.ZipFile(ipa_path) as archive:
-            archive.extractall(work)
-
-        app = next((work / "Payload").glob("*.app"))
-        framework = app / "Frameworks" / SIDESTORE_FRAMEWORK
-        if not framework.is_dir():
-            raise LiveContainerError(
-                f"{Path(ipa_path).name} has no {SIDESTORE_FRAMEWORK}, so it is not a "
-                "LiveContainer build with SideStore inside it."
-            )
-
-        (framework / ALT_CERTIFICATE_FILE).write_bytes(alt_p12)
-
-        info_path = framework / "Info.plist"
-        info = plistlib.loads(info_path.read_bytes())
-        info[_ALT_CERTIFICATE_ID_KEY] = serial
-        info[_ALT_APP_GROUPS_KEY] = [group]
-        info_path.write_bytes(plistlib.dumps(info, fmt=plistlib.FMT_BINARY))
-
-        # Stored, not deflated: this goes straight back into zsign, which re-reads and
-        # re-zips it anyway, so spending time compressing here is wasted.
-        seeded = Path(dest_dir) / f"{Path(ipa_path).stem}_ss.ipa"
-        ipa_module._zip_dir(work, str(seeded), 0)
-        return str(seeded)
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
-
-
-def has_sidestore(ipa_path: str) -> bool:
-    """Whether this LiveContainer build carries SideStore inside it.
-
-    Read from the bundle rather than taken from the file name, which a user may have
-    renamed: the SideStore build ships SideStoreApp.framework, and that framework is what
-    gives the phone a store able to refresh on its own.
-    """
-    try:
-        with zipfile.ZipFile(ipa_path) as archive:
-            return any(
-                "SideStoreApp.framework/" in name for name in archive.namelist()
-            )
-    except (OSError, zipfile.BadZipFile):
-        return False
-
-
 # --------------------------------------------------------------------------- #
 # Getting hold of the IPA
 # --------------------------------------------------------------------------- #
-def latest_release(variant: str = VARIANT_SIDESTORE) -> dict[str, Any]:
+def latest_release() -> dict[str, Any]:
     """Describe LiveContainer's newest release, without downloading it.
 
-    ``variant`` picks between the two builds each release carries - see
-    :data:`VARIANTS`. The SideStore one is the default because it is what makes an
-    on-device refresh possible, and it costs nothing extra: the store lives inside the
-    same bundle id, so the phone still counts one installed app.
+    Only the plain build (``LiveContainer.ipa``) is ever chosen; the build that bundles
+    SideStore is deliberately not offered.
     """
-    if variant not in VARIANTS:
-        raise LiveContainerError(
-            f"Unknown LiveContainer build '{variant}'. Choose one of: {', '.join(VARIANTS)}."
-        )
     try:
         response = requests.get(RELEASES_URL, timeout=_TIMEOUTS)
         response.raise_for_status()
@@ -246,11 +134,10 @@ def latest_release(variant: str = VARIANT_SIDESTORE) -> dict[str, Any]:
             "Check your connection, or download the IPA yourself and pick it."
         ) from exc
 
-    asset = _pick_asset(release.get("assets") or [], variant)
+    asset = _pick_asset(release.get("assets") or [])
     if asset is None:
-        wanted = "with SideStore" if variant == VARIANT_SIDESTORE else "without SideStore"
         raise LiveContainerError(
-            f"LiveContainer {release.get('tag_name') or 'latest'} has no .ipa {wanted} "
+            f"LiveContainer {release.get('tag_name') or 'latest'} has no plain .ipa "
             f"attached. Download one from {PROJECT_URL}/releases and pick the file."
         )
     return {
@@ -261,52 +148,35 @@ def latest_release(variant: str = VARIANT_SIDESTORE) -> dict[str, Any]:
         "asset_name": asset.get("name"),
         "url": asset.get("browser_download_url"),
         "bytes": asset.get("size"),
-        "variant": variant,
     }
 
 
-def _pick_asset(
-    assets: list[dict[str, Any]], variant: str = VARIANT_SIDESTORE
-) -> dict[str, Any] | None:
-    """Choose one LiveContainer build from a release's assets.
+def _pick_asset(assets: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Choose the plain LiveContainer build from a release's assets.
 
-    A release carries `LiveContainer.ipa` and `LiveContainer+SideStore.ipa`, and telling
-    them apart matters: only the second can refresh itself on the phone. Any asset naming
-    a variant we cannot provision - notably the TrollStore/jailbreak builds, which expect
-    entitlements a free profile will never grant - is skipped, so a download cannot
-    silently pick something that installs and then will not run.
+    A release carries `LiveContainer.ipa` and `LiveContainer+SideStore.ipa`; only the
+    first is wanted. Any asset naming a variant we cannot provision - the SideStore build,
+    and the TrollStore builds, which expect entitlements a free profile will never grant -
+    is skipped, so a download cannot silently pick something else.
     """
-    candidates = [a for a in assets if str(a.get("name", "")).lower().endswith(".ipa")]
-    excluded = ("trollstore", "jb", "jailbreak", "debug")
+    excluded = ("sidestore", "trollstore", "jb", "debug")
     usable = [
-        a for a in candidates
-        if not any(word in str(a.get("name", "")).lower() for word in excluded)
+        a for a in assets
+        if str(a.get("name", "")).lower().endswith(".ipa")
+        and not any(word in str(a.get("name", "")).lower() for word in excluded)
     ]
-
-    def has_sidestore(asset: dict[str, Any]) -> bool:
-        return "sidestore" in str(asset.get("name", "")).lower()
-
-    wanted = [a for a in usable if has_sidestore(a) == (variant == VARIANT_SIDESTORE)]
-    # Nothing matching the requested build is a real answer, not a reason to hand back
-    # the other one: they differ in whether the phone can refresh itself.
-    pool = wanted or ([] if usable else candidates)
     # Shortest name wins: "LiveContainer.ipa" over "LiveContainer.Something.ipa".
-    return min(pool, key=lambda a: len(str(a.get("name", "")))) if pool else None
+    return min(usable, key=lambda a: len(str(a.get("name", "")))) if usable else None
 
 
 def download(
     directory: str | None = None,
     *,
-    variant: str = VARIANT_SIDESTORE,
     on_progress: ProgressFn | None = None,
 ) -> dict[str, Any]:
-    """Download a LiveContainer IPA and return where it landed.
-
-    ``variant`` chooses the build, and is passed straight to :func:`latest_release`, so a
-    caller cannot end up downloading a different build than it asked about.
-    """
+    """Download the plain LiveContainer IPA and return where it landed."""
     progress: ProgressFn = on_progress or (lambda *_args: None)
-    release = latest_release(variant)
+    release = latest_release()
 
     target_dir = Path(directory).expanduser().resolve() if directory else _default_dir()
     try:
@@ -582,59 +452,6 @@ def _manual_instructions(bundle: dict[str, Any]) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# The pairing file the built-in SideStore needs
-# --------------------------------------------------------------------------- #
-def pairing_record(udid: str) -> bytes:
-    """This PC's pairing record for a device, in the form SideStore accepts.
-
-    usbmux writes every key a lockdown session needs but *not* ``UDID`` - the file name
-    carries that. SideStore is handed the file on its own, with no name to read, so
-    without the key it cannot tell which device the record is for and rejects it as
-    "invalid or missing". Adding it is the whole difference between a record that is
-    complete and one that is usable; confirmed by SideStore's own log, which lists the
-    keys it loaded.
-    """
-    from . import pairing as pairing_mod
-
-    try:
-        return pairing_mod.lockdown_xml(udid, lockdown_dir=_LOCKDOWN_DIR)
-    except pairing_mod.PairingError as exc:
-        raise LiveContainerError(str(exc)) from exc
-
-
-def deliver_pairing(bundle_id: str, udid: str, serial: str | None = None) -> dict[str, Any]:
-    """Give the built-in SideStore its pairing file, so it never asks for one.
-
-    Written to two places. SideStore's own Documents is where it looks on launch, and
-    LiveContainer's Documents is exposed by the Files app, so the file can still be picked
-    by hand if that location ever changes. On a fresh install SideStore's container does
-    not exist until it is first opened, so the directory is created rather than assumed.
-
-    Prefers an imported or iPASide-created Remote Pairing file when one exists
-    for this UDID, because that is the record SideStore 0.6.3 needs on iOS 26.4+.
-    """
-    from . import pairing as pairing_mod
-
-    pairing_mod._maybe_ensure_remote_pairing(udid, serial, _LOCKDOWN_DIR)
-    try:
-        payload = pairing_mod.payload_bytes(udid, lockdown_dir=_LOCKDOWN_DIR)
-    except pairing_mod.PairingError as exc:
-        raise LiveContainerError(str(exc)) from exc
-    try:
-        written = asyncio.run(
-            _write_documents(
-                bundle_id,
-                serial,
-                {PAIRING_NAME: payload},
-                directories=(SIDESTORE_DOCUMENTS, "/Documents"),
-            )
-        )
-    except Exception as exc:  # noqa: BLE001 - any transport failure means the same thing
-        return {"paired": False, "error": str(exc)}
-    return {"paired": True, "bytes": len(payload), "written": written}
-
-
-# --------------------------------------------------------------------------- #
 # Apps that run inside LiveContainer
 # --------------------------------------------------------------------------- #
 def guest_apps(bundle_id: str, serial: str | None = None) -> list[dict[str, Any]]:
@@ -767,7 +584,6 @@ def setup(
     # The signing profile injects this and delivers the certificate afterwards; we only
     # read it here to report which route the user is on.
     helper = signing.resolve_helper_dylib()
-    sidestore = has_sidestore(ipa_path)
 
     result = sideload.run_sideload(
         ipa_path,
@@ -796,9 +612,7 @@ def setup(
     return {
         **result,
         "livecontainer_version": info.get("version"),
-        "has_sidestore": sidestore,
         "certificate": certificate,
-        "pairing": outcome.get("pairing"),
         "helper_dylib": helper,
         "launch_required": bool(certificate.get("automatic")),
     }
@@ -831,22 +645,11 @@ def status(serial: str | None = None) -> dict[str, Any]:
     except Exception:  # noqa: BLE001 - a locked or busy device is not a failure here
         documents = []
 
-    # Which build is on the phone cannot be read from the container - its frameworks are in
-    # the app bundle, which house_arrest does not vend - so the answer comes from the IPA
-    # the refresh registry recorded, which is the file that was signed and installed.
-    from . import refresh as refresh_module
-
-    record = refresh_module.get(entry["bundle_id"]) or {}
-    source = record.get("source_ipa")
-    sidestore = bool(source) and has_sidestore(str(source))
-
     return {
         "installed": True,
         "bundle_id": entry["bundle_id"],
         "name": entry.get("name"),
         "version": entry.get("version"),
-        "has_sidestore": sidestore,
-        "pairing_present": PAIRING_NAME in documents,
         "certificate_pending": REQUEST_NAME in documents,
         "certificate_file_present": CERTIFICATE_NAME in documents,
         # LiveContainer creates these on first launch, so their absence means it has

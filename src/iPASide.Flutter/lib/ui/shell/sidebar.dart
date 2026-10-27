@@ -53,7 +53,7 @@ class Sidebar extends StatelessWidget {
             // page. Without it traversal follows reading order across the
             // window, which interleaves the rail with the screen beside it —
             // Tab from "LiveContainer" lands on a card, then back on
-            // "Jailbreak".
+            // "Account".
             child: FocusTraversalGroup(
               child: Column(
                 children: [

@@ -185,9 +185,9 @@ def hint(info: dict, values: dict, legacy: bool = False) -> str | None:
 
 
 def test_an_app_that_needs_a_newer_ios_is_named_as_the_reason() -> None:
-    text = hint({"display_name": "Dopamine", "minimum_os": "15.0", "architectures": ["arm64"]}, OLD_IPAD)
+    text = hint({"display_name": "Newapp", "minimum_os": "15.0", "architectures": ["arm64"]}, OLD_IPAD)
     assert text is not None
-    assert "Dopamine needs iOS 15.0 or later" in text
+    assert "Newapp needs iOS 15.0 or later" in text
     assert "iPad 2 is on iOS 6.1.3" in text
 
 
@@ -315,10 +315,10 @@ def test_a_failed_install_on_an_old_device_explains_itself_and_keeps_apples_word
         raise _InstallerRefused("ApplicationVerificationFailed: None")
 
     with pytest.raises(sideload.SideloadError) as caught:
-        run(OLD_IPAD, {"display_name": "Dopamine", "minimum_os": "15.0", "architectures": ["arm64"]}, refuse)
+        run(OLD_IPAD, {"display_name": "Newapp", "minimum_os": "15.0", "architectures": ["arm64"]}, refuse)
     message = str(caught.value)
     assert message.startswith("ApplicationVerificationFailed: None")
-    assert "Dopamine needs iOS 15.0 or later" in message
+    assert "Newapp needs iOS 15.0 or later" in message
     assert isinstance(caught.value.__cause__, _InstallerRefused), "the original error stays attached"
 
 

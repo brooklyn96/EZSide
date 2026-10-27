@@ -53,20 +53,6 @@ class ProgressSchedule {
     determinate: <String>{'download', 'install'},
   );
 
-  /// Installing a jailbreak (Dopamine): download the IPA, then sideload it. Same
-  /// phases as a LiveContainer setup minus the certificate hand-off at the end.
-  static const ProgressSchedule jailbreak = ProgressSchedule(
-    steps: <String>['Download', 'Provision', 'Sign', 'Install'],
-    phases: <String>['download', 'provision', 'sign', 'install'],
-    labels: <String>[
-      'Downloading\u2026',
-      'Provisioning\u2026',
-      'Signing\u2026',
-      'Installing\u2026',
-    ],
-    determinate: <String>{'download', 'install'},
-  );
-
   /// The step index a phase name maps to, or null for one this flow does not draw.
   int? indexOf(String? phase) {
     if (phase == null) return null;

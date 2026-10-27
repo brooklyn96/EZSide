@@ -20,7 +20,7 @@ The text below is the upstream iPASide README.
 
 **Put any app on your iPhone, from Windows, with just your Apple ID.**
 
-No jailbreak. No paid developer account. No closed-source middleman.
+No paid developer account. No closed-source middleman.
 
 [![Download](https://img.shields.io/github/v/release/brooklyn96/EZSide?label=download&style=for-the-badge&color=6366f1)](https://github.com/brooklyn96/EZSide/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-informational?style=for-the-badge)](LICENSE)
@@ -87,12 +87,6 @@ inside it rather than on your phone, so the three-app limit stops being the thin
 plan around.
 
 ![LiveContainer](docs/screenshots/livecontainer.png)
-
-**Jailbreak** — iPASide checks whether Dopamine supports your iPhone's chip and iOS,
-then installs the latest release in one press. It is an ordinary sideload; the
-jailbreak itself only runs on your phone the first time you open Dopamine.
-
-![Jailbreak](docs/screenshots/jailbreak.png)
 
 **Account** — every certificate on your Apple ID and which tool registered it, so you
 can tidy up without breaking something you did not know was there.
@@ -269,7 +263,7 @@ The engine works on its own, without the app. Every command takes `--json`:
 | `login` | Apple ID sign-in (`--email`, `--code`, `--status`, `--accounts`, `--use`, `--logout`) |
 | `inspect <ipa>` | Read an IPA's identity and icon without extracting it |
 | `sideload <ipa>` | Provision, sign and install, with all the advanced options |
-| `livecontainer` | LiveContainer: `--setup`, `--variant`, and `--apps` / `--add` / `--remove` for the apps inside it |
+| `livecontainer` | LiveContainer: `--setup` (the plain LiveContainer build), and `--apps` / `--add` / `--remove` for the apps inside it |
 | `installs` / `refresh` / `forget` | Manage the registry and renew signatures |
 | `signed` | Report or clean up kept `.ipa` files (`--clean`) |
 | `slots` / `revoke-cert` / `delete-app-id` | An Apple ID's certificates, App IDs and devices; `--email` picks which account |

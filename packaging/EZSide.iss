@@ -87,7 +87,7 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 ; other applications") tells the user nothing about what they are installing.
 SetupWindowTitle=%1 Setup
 WelcomeLabel1=Install EZSide
-WelcomeLabel2=EZSide signs any .ipa with your own Apple ID and installs it on your iPhone or iPad, over USB or Wi-Fi — no jailbreak and no paid developer account.
+WelcomeLabel2=EZSide signs any .ipa with your own Apple ID and installs it on your iPhone or iPad, over USB or Wi-Fi — no paid developer account.
 ; Inno appends this to the welcome text. The default ("Click Next to continue") now
 ; contradicts the button, which reads Install because the Ready page is gone.
 ClickNext=Setup installs the app together with its self-contained signing engine. Your Apple ID is only ever sent to Apple.

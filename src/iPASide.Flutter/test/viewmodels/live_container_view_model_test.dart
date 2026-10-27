@@ -704,39 +704,6 @@ void main() {
     });
   });
 
-  group('LiveContainerViewModel SideStore build', () {
-    test('a build carrying SideStore is reported with its pairing state', () async {
-      final _FakeRunner runner = _FakeRunner()
-        ..next(
-          'livecontainer',
-          _ok(<String, dynamic>{
-            ..._status(),
-            'has_sidestore': true,
-            'pairing_present': true,
-          }),
-        )
-        ..always('livecontainer--apps', _ok(<dynamic>[]));
-
-      final LiveContainerViewModel vm = _model(runner);
-      await vm.load();
-
-      expect(vm.hasSideStore, isTrue);
-      expect(vm.isPaired, isTrue);
-    });
-
-    test('a plain build reports neither', () async {
-      final _FakeRunner runner = _FakeRunner()
-        ..next('livecontainer', _ok(_status()))
-        ..always('livecontainer--apps', _ok(<dynamic>[]));
-
-      final LiveContainerViewModel vm = _model(runner);
-      await vm.load();
-
-      expect(vm.hasSideStore, isFalse);
-      expect(vm.isPaired, isFalse);
-    });
-  });
-
   group('ProgressSchedule', () {
     test('the sideload schedule is unchanged', () {
       expect(ProgressSchedule.sideload.indexOf('provision'), 0);

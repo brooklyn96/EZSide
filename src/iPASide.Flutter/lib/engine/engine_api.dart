@@ -161,46 +161,6 @@ class EngineApi {
         _asObject(PairingDelivery.fromJson),
       );
 
-  // ---- Jailbreak --------------------------------------------------------- //
-
-  /// Whether Dopamine fits the connected device, worked out from its chip + iOS.
-  ///
-  /// Advice only — nothing is downloaded or installed. The engine reads the device
-  /// and returns an [JailbreakAdvice] the UI renders directly.
-  Future<JailbreakAdvice> jailbreakAdvice({
-    String? udid,
-    String? connection,
-  }) =>
-      _runTyped<JailbreakAdvice>(
-        <String>['jailbreak', ..._targetArgs(udid, connection)],
-        _asObject(JailbreakAdvice.fromJson),
-      );
-
-  /// Signs and installs Dopamine, downloading the latest IPA unless [ipaPath] is set.
-  ///
-  /// This is an ordinary sideload: the exploit runs on the phone the first time the
-  /// user opens Dopamine, never here. Streams the same download → provision → sign →
-  /// install phases a LiveContainer setup does.
-  Future<JailbreakInstallResult> installJailbreak({
-    String? ipaPath,
-    String? udid,
-    String? connection,
-    bool keepSigned = false,
-    String? signedDirectory,
-    void Function(SideloadProgress progress)? onProgress,
-  }) =>
-      _runTyped<JailbreakInstallResult>(
-        buildJailbreakInstallArgs(
-          ipaPath: ipaPath,
-          udid: udid,
-          connection: connection,
-          keepSigned: keepSigned,
-          signedDirectory: signedDirectory,
-        ),
-        _asObject(JailbreakInstallResult.fromJson),
-        onProgress: _progressPump(onProgress),
-      );
-
   // ---- Developer account ------------------------------------------------- //
 
   /// What one Apple ID's developer account holds: certificates, App IDs, devices.
@@ -674,32 +634,6 @@ class EngineApi {
       'livecontainer',
       ..._targetArgs(udid, connection),
       '--setup',
-    ];
-    final String? path = ipaPath?.trim();
-    if (path != null && path.isNotEmpty) {
-      args.addAll(<String>['--ipa', path]);
-    }
-    args.addAll(_signedOutputArgs(keepSigned, signedDirectory));
-    return args;
-  }
-
-  /// The `jailbreak --install` argv.
-  ///
-  /// `--ipa` only when the caller already has a file; without it the engine fetches
-  /// the newest Dopamine release, which is what the UI does. The signed-output pair is
-  /// carried because a jailbreak install is a sideload underneath, so the user's
-  /// keep-signed preference applies to it like any other.
-  static List<String> buildJailbreakInstallArgs({
-    String? ipaPath,
-    String? udid,
-    String? connection,
-    bool keepSigned = false,
-    String? signedDirectory,
-  }) {
-    final List<String> args = <String>[
-      'jailbreak',
-      ..._targetArgs(udid, connection),
-      '--install',
     ];
     final String? path = ipaPath?.trim();
     if (path != null && path.isNotEmpty) {

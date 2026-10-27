@@ -1,6 +1,6 @@
 """Every `livecontainer` command path, exercised through the real CLI.
 
-Written because a signature mismatch shipped: the CLI passed ``variant=`` to a
+Written because a signature mismatch shipped: the CLI passed an argument to a
 ``download()`` that did not accept it, so the one path the app's Install button uses -
 setup with no ``--ipa``, which downloads first - failed with a TypeError. Every function
 involved was tested individually and the wiring between them was not.
@@ -32,19 +32,14 @@ def boundaries(monkeypatch, tmp_path):
         return _inner
 
     # The network: what a release looks like, without asking GitHub.
-    def latest_release(variant: str = livecontainer.VARIANT_SIDESTORE):
-        state["calls"].append(f"latest_release:{variant}")
-        name = (
-            "LiveContainer+SideStore.ipa"
-            if variant == livecontainer.VARIANT_SIDESTORE
-            else "LiveContainer.ipa"
-        )
+    def latest_release():
+        state["calls"].append("latest_release")
+        name = "LiveContainer.ipa"
         return {
             "version": "3.8.0",
             "asset_name": name,
             "url": f"https://example.invalid/{name}",
             "bytes": 4,
-            "variant": variant,
         }
 
     def stream(url, destination, total, progress):
@@ -66,7 +61,6 @@ def boundaries(monkeypatch, tmp_path):
             "version": "3.8.0",
         },
     )
-    monkeypatch.setattr(livecontainer, "has_sidestore", lambda _path: True)
 
     # The device.
     monkeypatch.setattr(
@@ -77,8 +71,6 @@ def boundaries(monkeypatch, tmp_path):
             "bundle_id": HOST,
             "name": "LiveContainer",
             "version": "3.8.0",
-            "has_sidestore": True,
-            "pairing_present": True,
             "certificate_pending": False,
             "certificate_file_present": True,
             "launched": True,
@@ -114,9 +106,7 @@ def boundaries(monkeypatch, tmp_path):
             "bundle_id": HOST,
             "name": "LiveContainer",
             "livecontainer_version": "3.8.0",
-            "has_sidestore": True,
             "certificate": {"seeded": True, "automatic": True},
-            "pairing": {"paired": True},
             "launch_required": True,
         }
 
@@ -147,16 +137,6 @@ def test_setup_without_an_ipa_downloads_first(boundaries):
     assert calls.index("stream") < calls.index("setup"), "download, then set up"
 
 
-def test_setup_downloads_the_requested_build(boundaries):
-    assert _run("--setup", "--variant", "plain") == 0
-    assert f"latest_release:{livecontainer.VARIANT_PLAIN}" in boundaries["calls"]
-
-
-def test_setup_defaults_to_the_sidestore_build(boundaries):
-    assert _run("--setup") == 0
-    assert f"latest_release:{livecontainer.VARIANT_SIDESTORE}" in boundaries["calls"]
-
-
 def test_setup_with_an_ipa_skips_the_download(boundaries, tmp_path):
     ipa = tmp_path / "LiveContainer.ipa"
     ipa.write_bytes(b"ipa!")
@@ -167,10 +147,9 @@ def test_setup_with_an_ipa_skips_the_download(boundaries, tmp_path):
     assert boundaries["setup_ipa"] == str(ipa)
 
 
-@pytest.mark.parametrize("variant", list(livecontainer.VARIANTS))
-def test_download_on_its_own(boundaries, variant, capsys):
-    assert _run("--download", "--variant", variant) == 0
-    assert f"latest_release:{variant}" in boundaries["calls"]
+def test_download_on_its_own(boundaries, capsys):
+    assert _run("--download") == 0
+    assert "latest_release" in boundaries["calls"]
     assert "stream" in boundaries["calls"]
 
 
@@ -247,7 +226,6 @@ def test_every_flag_the_parser_accepts_is_handled(boundaries, tmp_path):
         "--ipa",
         "--dir",
         "--manual-certificate",
-        "--variant",
         "--apps",
         "--add",
         "--remove",

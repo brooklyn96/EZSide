@@ -55,12 +55,8 @@ class _LiveContainerViewState extends State<LiveContainerView> {
                 const SizedBox(height: Space.s5),
                 Entrance(index: 3, child: _GuestApps(vm: vm)),
               ],
-              if (vm.hasSideStore) ...<Widget>[
-                const SizedBox(height: Space.s5),
-                Entrance(index: 4, child: _SideStoreCard(vm: vm)),
-              ],
               const SizedBox(height: Space.s5),
-              const Entrance(index: 5, child: _ExplainerCard()),
+              const Entrance(index: 4, child: _ExplainerCard()),
             ],
           ),
         ),
@@ -338,60 +334,6 @@ class _GuestApps extends StatelessWidget {
       ),
     );
   }
-}
-
-/// The SideStore build's own state: whether the phone can refresh without a PC.
-class _SideStoreCard extends StatelessWidget {
-  const _SideStoreCard({required this.vm});
-
-  final LiveContainerViewModel vm;
-
-  @override
-  Widget build(BuildContext context) => AppCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Row(
-              children: <Widget>[
-                const Expanded(child: SectionLabel('ON-DEVICE REFRESH')),
-                Pill(
-                  label: vm.isPaired ? 'Paired' : 'Not paired',
-                  kind: vm.isPaired ? PillKind.ok : PillKind.warn,
-                ),
-              ],
-            ),
-            const SizedBox(height: Space.s2),
-            Text(
-              vm.isPaired
-                  ? 'This build carries SideStore, and it has this PC\u2019s pairing '
-                      'file, so it can re-sign apps on the phone itself.'
-                  : 'This build carries SideStore but has no pairing file yet, so it '
-                      'cannot re-sign anything. Reinstall to deliver one.',
-              style: context.t.bodyMuted,
-            ),
-            const SizedBox(height: Space.s4),
-            // Two things SideStore needs that iPASide cannot provide, said plainly rather
-            // than left for the user to hit as errors.
-            const _Point(
-              icon: Icons.vpn_lock_outlined,
-              title: 'It needs a local tunnel',
-              body: 'SideStore reaches your phone over the network, so a local device '
-                  'VPN such as StosVPN or LocalDevVPN has to be connected before a '
-                  'refresh will start.',
-            ),
-            const SizedBox(height: Space.s4),
-            const _Point(
-              icon: Icons.shortcut_outlined,
-              title: 'And a Shortcut named TurnOffData',
-              body: 'When SideStore finishes it runs an iOS Shortcut with exactly that '
-                  'name, to drop the tunnel. Without one, the Shortcuts app opens with '
-                  'an error \u2014 the refresh still worked. Create a Shortcut called '
-                  'TurnOffData containing a disconnect-VPN action to silence it. '
-                  'Shortcuts cannot be created from a PC.',
-            ),
-          ],
-        ),
-      );
 }
 
 /// Why this exists, in the terms someone hitting the three-app wall would ask it.

@@ -128,12 +128,6 @@ class LiveContainerViewModel extends BaseViewModel {
   /// Whether anything is in flight, so the list should be frozen.
   bool get isGuestBusy => _isAdding || _removingBundleId != null;
 
-  /// Whether this build carries SideStore, and so can refresh on the phone itself.
-  bool get hasSideStore => _status?.hasSidestore ?? false;
-
-  /// Whether the pairing file that on-device refresh needs is on the device.
-  bool get isPaired => _status?.pairingPresent ?? false;
-
   void dismissGuestNotice() {
     if (_guestNotice == null) return;
     _guestNotice = null;
