@@ -191,6 +191,40 @@ void main() {
       expect(logAtNotice, contains('com.a'));
     });
 
+    test('a partial failure frame (ok: false) still lists the failed app',
+        () async {
+      // Engine exit code 2: the serve frame is ok:false but carries the list.
+      final int code = await AutoRefreshRunner.run(
+        paths: paths,
+        settings: _FakeSettings(),
+        transport: _FakeRunner(
+          outcome: const EngineResult(
+            ok: false,
+            data: <String, dynamic>{
+              'status': 'done',
+              'count': 2,
+              'refreshed': <dynamic>[
+                <String, dynamic>{'bundle_id': 'com.a', 'status': 'ok'},
+                <String, dynamic>{
+                  'bundle_id': 'com.b',
+                  'status': 'error',
+                  'error': 'device is not connected',
+                },
+              ],
+            },
+          ),
+        ),
+        notice: notice,
+      );
+
+      expect(code, 1);
+      expect(notices, hasLength(1));
+      expect(notices.single.$2, contains('1 app(s)'));
+      expect(log(), contains('com.a'));
+      expect(log(), contains('com.b'));
+      expect(log(), contains('device is not connected'));
+    });
+
     test('a thrown run shows one notice and exits 1', () async {
       final int code = await AutoRefreshRunner.run(
         paths: paths,

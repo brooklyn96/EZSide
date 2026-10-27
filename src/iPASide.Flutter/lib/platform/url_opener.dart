@@ -18,7 +18,6 @@ const int _showNormal = 1;
 Future<bool> openUrl(String url) async {
   final Uri? parsed = Uri.tryParse(url.trim());
   if (parsed == null ||
-      !parsed.hasScheme ||
       !(parsed.isScheme('https') || parsed.isScheme('http'))) {
     return false;
   }

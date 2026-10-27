@@ -26,6 +26,7 @@ import 'settings_store.dart';
 /// When the run throws, or any app comes back with status `error`, one native
 /// warning box is shown AFTER the engine has exited and the log is written, and
 /// the exit code is 1. Nothing is shown when nothing was due or all succeeded.
+/// The running-app marker stays held until the box is closed.
 ///
 /// [run] must be awaited before any window is created, and its result passed to
 /// `exit`.
@@ -104,18 +105,22 @@ abstract final class AutoRefreshRunner {
         AutoRefreshLog.formatRunFailure(DateTime.now(), _messageOf(error)),
       );
       exitCode = 1;
-    } finally {
-      marker.dispose();
     }
 
-    await _appendLines(appPaths.autoRefreshLogPath, lines);
-    if (exitCode != 0) {
-      try {
-        notice('EZSide', failureText(failedApps));
-      } catch (_) {
-        // The log already holds the failure; a notice that cannot be shown must
-        // not change the exit code.
+    // The marker is held until the notice is closed: the box keeps this process
+    // alive, and the installer must still see EZSide running meanwhile.
+    try {
+      await _appendLines(appPaths.autoRefreshLogPath, lines);
+      if (exitCode != 0) {
+        try {
+          notice('EZSide', failureText(failedApps));
+        } catch (_) {
+          // The log already holds the failure; a notice that cannot be shown
+          // must not change the exit code.
+        }
       }
+    } finally {
+      marker.dispose();
     }
     return exitCode;
   }

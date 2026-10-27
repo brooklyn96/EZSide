@@ -413,8 +413,9 @@ class EngineApi {
   /// than about a record: without it the unattended daily run would go over the air
   /// after the user asked for USB only.
   ///
-  /// The engine reports `ok` even when individual apps fail, so callers MUST
-  /// inspect [RefreshSummary.refreshed].
+  /// When some apps fail the engine exits 2 but still sends the per-app list, so
+  /// that list is returned rather than thrown away; callers MUST inspect
+  /// [RefreshSummary.refreshed]. Any other failure throws.
   Future<RefreshSummary> refresh({
     String? bundleId,
     bool all = false,
@@ -422,7 +423,7 @@ class EngineApi {
     String? signedDirectory,
     String? connection,
     void Function(SideloadProgress progress)? onProgress,
-  }) {
+  }) async {
     final List<String> args = <String>['refresh'];
     if (bundleId != null) {
       args.add('--bundle-id');
@@ -433,11 +434,16 @@ class EngineApi {
     args.addAll(_targetArgs(null, connection));
     args.addAll(_signedOutputArgs(keepSigned, signedDirectory));
 
-    return _runTyped<RefreshSummary>(
-      args,
-      _asObject(RefreshSummary.fromJson),
-      onProgress: _progressPump(onProgress),
-    );
+    final EngineResult result =
+        await _client.run(args, onProgress: _progressPump(onProgress));
+    final Map<String, dynamic>? data = asJsonObject(result.data);
+    if (result.ok || (data != null && data['refreshed'] is List)) {
+      if (data == null) {
+        throw EngineException('The engine returned no data.');
+      }
+      return RefreshSummary.fromJson(data);
+    }
+    throw EngineException.fromResult(result.data, result.error);
   }
 
   /// Drops an app from the sideload registry without touching the device.

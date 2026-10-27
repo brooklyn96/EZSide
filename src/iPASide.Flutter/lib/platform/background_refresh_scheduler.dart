@@ -134,6 +134,12 @@ class WindowsBackgroundRefreshScheduler implements BackgroundRefreshScheduler {
   @visibleForTesting
   static String taskDefinitionXml() => _taskXml();
 
+  /// The task definition.
+  ///
+  /// `ExecutionTimeLimit` is PT1H: Windows ends the run after one hour, and that
+  /// includes the time the failure notice stays open. A user who is away for more
+  /// than an hour finds no box; the task then shows a termination code instead of
+  /// exit 1, and the refresh log still holds the failure.
   static String _taskXml() {
     final String exe = _escape(Platform.resolvedExecutable);
     return '''

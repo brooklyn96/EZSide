@@ -806,6 +806,48 @@ void main() {
       );
     });
 
+    test('refresh returns the per-app list when some apps failed', () async {
+      // The engine exits 2 on a partial failure, so the serve frame is ok:false
+      // but still carries `refreshed`; throwing would hide which apps failed.
+      final _FakeRunner runner = _FakeRunner(
+        result: const EngineResult(
+          ok: false,
+          data: <String, dynamic>{
+            'status': 'done',
+            'count': 2,
+            'refreshed': <dynamic>[
+              <String, dynamic>{'bundle_id': 'com.a', 'status': 'ok'},
+              <String, dynamic>{
+                'bundle_id': 'com.b',
+                'status': 'error',
+                'error': 'no device',
+              },
+            ],
+          },
+        ),
+      );
+
+      final RefreshSummary summary = await EngineApi(runner).refresh();
+
+      expect(summary.refreshed, hasLength(2));
+      expect(summary.refreshed.last.status, 'error');
+      expect(summary.refreshed.last.error, 'no device');
+    });
+
+    test('refresh still throws when a failure carries no per-app list', () {
+      final _FakeRunner runner = _FakeRunner(
+        result: const EngineResult(
+          ok: false,
+          data: <String, dynamic>{'error': 'no account'},
+        ),
+      );
+
+      expect(
+        EngineApi(runner).refresh(),
+        throwsA(isA<EngineException>()),
+      );
+    });
+
     test('refresh maps per-app outcomes', () async {
       final _FakeRunner runner = _FakeRunner(
         result: const EngineResult(
