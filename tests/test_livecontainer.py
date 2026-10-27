@@ -131,6 +131,13 @@ def test_asset_selection_skips_builds_we_cannot_provision():
     assert livecontainer._pick_asset(assets) is None
 
 
+def test_asset_selection_never_picks_the_jailbreak_build():
+    """LiveContainer-Jailbreak.ipa names no "jb", yet it must not be chosen."""
+    assert livecontainer._pick_asset([{"name": "LiveContainer-Jailbreak.ipa"}]) is None
+    assets = [{"name": "LiveContainer-Jailbreak.ipa", "size": 1}, {"name": "LiveContainer.ipa", "size": 2}]
+    assert livecontainer._pick_asset(assets)["name"] == "LiveContainer.ipa"
+
+
 def test_asset_selection_ignores_non_ipa_assets():
     assets = [
         {"name": "LiveContainer.tipa"},

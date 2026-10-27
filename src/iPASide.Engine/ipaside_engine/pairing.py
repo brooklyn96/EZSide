@@ -74,7 +74,7 @@ def has_rppairing_keys(record: dict[str, Any]) -> bool:
 def payload_bytes(udid: str, *, lockdown_dir: Path | None = None) -> bytes:
     """The pairing file that should be exported for ``udid``.
 
-    An imported or iPASide-created file wins, because that is the one that carries
+    An imported or EZSide-created file wins, because that is the one that carries
     Remote Pairing keys. Missing lockdown keys in the store are filled from usbmux
     so a Remote-Pairing-only document still carries the USB half. With no store,
     this is the usbmux record plus ``UDID``.
@@ -169,7 +169,7 @@ def import_from(
 
     The file is validated, checked against ``udid`` so another phone's record
     cannot be attached by accident, merged with the usbmux lockdown half when the
-    import is Remote-Pairing-only, and written under iPASide's data directory.
+    import is Remote-Pairing-only, and written under EZSide's data directory.
     """
     path = Path(source).expanduser()
     if not path.is_file():
@@ -398,6 +398,6 @@ def _unreadable_imported_message(path: Path, reason: str) -> str:
 
 def _missing_record_message() -> str:
     return (
-        "This PC has no pairing record for the device, so on-device refresh cannot "
-        "be set up. Reconnect it over USB and trust this computer, then try again."
+        "This PC has no pairing record for the device, so there is no pairing file to "
+        "export or extend. Reconnect it over USB and trust this computer, then try again."
     )

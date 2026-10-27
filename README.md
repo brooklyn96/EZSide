@@ -86,8 +86,6 @@ one or all of them.
 inside it rather than on your phone, so the three-app limit stops being the thing you
 plan around.
 
-![LiveContainer](docs/screenshots/livecontainer.png)
-
 **Account** — every certificate on your Apple ID and which tool registered it, so you
 can tidy up without breaking something you did not know was there.
 
@@ -284,12 +282,12 @@ profile.
 
 ## Quality
 
-**1,294 automated tests**, run on every push along with a full installer build:
+**Automated tests** run on every push along with a full installer build:
 
-| Suite | Tests | Files | What it covers |
-|---|---|---|---|
-| Engine (pytest) | 508 | 25 | Apple ID auth, provisioning, app groups, signing, `.deb` tweak extraction, install progress, device selection, multi-account, LiveContainer entitlements, pairing files, certificate scoping, Windows path limits, expiry, error phrasing |
-| App (Flutter) | 786 | 41 | Every view model, the engine transport, update planning, settings, the platform layer, motion, scroll |
+| Suite | What it covers |
+|---|---|
+| Engine (pytest) | Apple ID auth, provisioning, app groups, signing, `.deb` tweak extraction, install progress, device selection, multi-account, LiveContainer entitlements, pairing files, certificate scoping, Windows path limits, expiry, error phrasing |
+| App (Flutter) | Every view model, the engine transport, update planning, settings, the platform layer, motion, scroll |
 
 CI runs three jobs per push - `Engine tests`, `App analyze + tests`, `Build installer` -
 and lints are errors, not warnings. The badge above links to the runs.

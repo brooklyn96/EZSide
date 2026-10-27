@@ -159,7 +159,7 @@ def _pick_asset(assets: list[dict[str, Any]]) -> dict[str, Any] | None:
     and the TrollStore builds, which expect entitlements a free profile will never grant -
     is skipped, so a download cannot silently pick something else.
     """
-    excluded = ("sidestore", "trollstore", "jb", "debug")
+    excluded = ("sidestore", "trollstore", "jb", "jailbreak", "debug")
     usable = [
         a for a in assets
         if str(a.get("name", "")).lower().endswith(".ipa")
@@ -275,14 +275,12 @@ async def _write_documents(
     bundle_id: str,
     serial: str | None,
     files: dict[str, bytes],
-    *,
-    directories: tuple[str, ...] = ("/Documents",),
 ) -> list[str]:
-    """Write files into an installed app's container over house_arrest.
+    """Write files into an installed app's /Documents over house_arrest.
 
-    Each name is written into every directory given, and directories are created first:
-    on a fresh install a guest app's container does not exist until that app has been
-    opened once, and writing early is what stops it having to ask for the file at all.
+    /Documents is created first: on a fresh install a guest app's container does not
+    exist until that app has been opened once, and writing early is what stops it
+    having to ask for the file at all.
     """
     from pymobiledevice3.services.house_arrest import HouseArrestService
 
@@ -290,12 +288,11 @@ async def _write_documents(
     client = await lockdown.create(serial)
     try:
         async with await HouseArrestService.create(client, bundle_id) as service:
-            for directory in directories:
-                await service.makedirs(directory)
-                for name, payload in files.items():
-                    target = f"{directory}/{name}"
-                    await service.set_file_contents(target, payload)
-                    written.append(target)
+            await service.makedirs("/Documents")
+            for name, payload in files.items():
+                target = f"/Documents/{name}"
+                await service.set_file_contents(target, payload)
+                written.append(target)
     finally:
         await lockdown.close(client)
     return written
@@ -599,8 +596,8 @@ def setup(
         on_progress=progress,
     )
 
-    # Both delivered by the profile's post-install step, so that a refresh does it too
-    # rather than only a first install. Asking for a manual import re-does the
+    # The certificate is delivered by the profile's post-install step, so that a refresh
+    # does it too rather than only a first install. Asking for a manual import re-does the
     # certificate with the request left out, which is cheap - a few KB over USB.
     outcome = result.get("post_install") or {}
     certificate = outcome.get("certificate", outcome)
