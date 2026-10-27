@@ -1,0 +1,74 @@
+name: Build LiveContainer helper
+
+# iPASideCertImport.dylib is the one piece of iPASide that cannot be built on the
+# machine that ships it: it is an iOS arm64 Mach-O dylib, and that needs Xcode's
+# iPhoneOS SDK. It is small, changes rarely, and is injected into LiveContainer at
+# sign time, so CI builds it here and the result is committed into the engine's
+# vendor directory alongside zsign.
+#
+# Run this whenever the source changes, download the artifact, and commit it.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/lc-cert-import/**'
+      - '.github/workflows/build-lc-helper.yml'
+  pull_request:
+    paths:
+      - 'tools/lc-cert-import/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dylib:
+    name: Build iPASideCertImport.dylib
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Build
+        run: bash tools/lc-cert-import/build.sh
+
+      # The whole dylib is useless if the constructor is missing, since nothing else
+      # ever calls into it - LiveContainer does not know it exists. Fail here rather
+      # than discovering it on a phone.
+      - name: Verify it is a loadable arm64 dylib with an initialiser
+        run: |
+          set -euo pipefail
+          dylib=tools/lc-cert-import/iPASideCertImport.dylib
+
+          file "$dylib"
+          xcrun lipo -info "$dylib" | tee /tmp/arch.txt
+          grep -q 'arm64' /tmp/arch.txt
+
+          # otool -h reports filetype numerically; 6 is MH_DYLIB. Anything else means
+          # we produced an executable or bundle, which cannot be injected.
+          echo "--- filetype must be 6 (MH_DYLIB)"
+          xcrun otool -h "$dylib" | tee /tmp/hdr.txt
+          filetype="$(awk 'NR==4 {print $5}' /tmp/hdr.txt)"
+          echo "filetype: $filetype"
+          test "$filetype" = "6"
+
+          # Where the constructor lands depends on the linker: older ld64 emits
+          # __DATA,__mod_init_func, while newer ones record initialiser offsets in
+          # __TEXT,__init_offsets instead. Either is fine; neither is not.
+          echo "--- must carry a module initialiser"
+          xcrun otool -l "$dylib" | grep -E 'sectname|segname' > /tmp/sections.txt || true
+          grep -E '__mod_init_func|__init_offsets' /tmp/sections.txt
+
+          echo "--- linked libraries"
+          xcrun otool -L "$dylib"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: iPASideCertImport-dylib
+          path: tools/lc-cert-import/iPASideCertImport.dylib
+          if-no-files-found: error

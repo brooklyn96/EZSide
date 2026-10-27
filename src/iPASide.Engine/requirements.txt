@@ -1,0 +1,26 @@
+# iPASide Engine runtime dependencies.
+# The engine is the Python "device + Apple services" core that the .NET shell drives.
+
+# Device I/O: pairing, lockdown, installation_proxy, AFC, developer mode.
+pymobiledevice3>=10.0.4
+
+# Anisette: pure-Python Apple device-provisioning header generator for GSA login.
+Anisette>=1.2.4
+
+# SRP-6a for Apple GrandSlam (GSA) authentication (Apple variant: rfc5054 + no-username-in-x).
+srp>=1.0.22
+
+# CMS/crypto helpers used by GSA (AES-CBC spd decryption). Already pulled in by
+# pymobiledevice3, pinned here because gsa.py imports it directly.
+cryptography>=44
+
+# WebSocket protocol for the remote anisette provisioning session (already installed as a
+# dependency of pymobiledevice3; declared here because the engine now imports it directly).
+wsproto>=1.2
+
+# Public CA roots, combined with the pinned Apple CA for TLS verification.
+certifi>=2024.1.1
+
+# Decompress zstd-compressed .deb tweak packages (data.tar.zst). .lzma/.gz/.xz/.bz2
+# are handled by the standard library; zstd needs this.
+zstandard>=0.22

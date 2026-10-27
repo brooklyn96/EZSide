@@ -1,0 +1,61 @@
+# ---- Secrets & user data (NEVER commit) ----
+*.p12
+*.pem
+*.mobileprovision
+*.mobileprovision.plist
+.state/
+secrets/
+anisette-cache/
+*.apple-cookies
+
+# ---- Test / large artifacts ----
+*.ipa
+*.deb
+*.dylib
+# NOTE: do not use "*.app/" here - it would also match the src/iPASide.App/ project dir.
+Payload/
+
+# ---- Python ----
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+*.spec
+
+# ---- .NET ----
+bin/
+obj/
+publish*/
+artifacts/
+*.user
+.vs/
+
+# ---- Web (WebView2 UI) ----
+node_modules/
+web/dist/
+
+# ---- Editor / OS ----
+.idea/
+Thumbs.db
+desktop.ini
+
+# ---- Local scratch ----
+_probe_*.py
+_scratch/
+_apple_gsa_ca.pem
+
+# ---- Bundled zsign binary (built via tools/zsign/build-zsign.sh) ----
+src/iPASide.Engine/ipaside_engine/vendor/*.exe
+tools/zsign/*.exe
+tools/zsign/.build/
+
+# ---- Tracked exceptions ----
+# Apple's PUBLIC CA chain is pinned for TLS verification of gsa.apple.com.
+# It is not a secret and MUST be committed.
+!src/iPASide.Engine/ipaside_engine/certs/apple_gsa_ca.pem
+# The PyInstaller build recipe is source, not a build artifact.
+!packaging/*.spec
