@@ -1044,8 +1044,8 @@ def _pairing_udid(args: argparse.Namespace) -> str:
 
     ``--udid`` is enough: the lockdown record and any stored pairing file live
     on this PC, so export and import must not refuse to run because the phone is
-    unplugged. Creating Remote Pairing keys and placing the file still talk to
-    the device, and those paths fail later if it cannot be reached.
+    unplugged. Creating Remote Pairing keys still talks to the device, and fails
+    later if it cannot be reached.
     """
     if args.udid:
         return args.udid.strip()
@@ -1067,45 +1067,6 @@ def _print_pairing_status(report: dict[str, Any]) -> None:
         print(f"  {report['error']}")
     elif report.get("note"):
         print(f"  {report['note']}")
-    consumers = report.get("consumers") or []
-    if not report.get("device_reachable"):
-        reason = report.get("device_error") or "the device could not be listed"
-        print(f"  Installed apps: not listed ({reason})")
-        return
-    if not consumers:
-        print(
-            "  No supported apps are installed. Sideload EscapeOS, SideStore, "
-            "AltStore, LiveContainer, or StikDebug, then place the file."
-        )
-        return
-    print(f"  {len(consumers)} supported app(s) installed:")
-    for consumer in consumers:
-        extra = " (needs Remote Pairing)" if consumer.get("needs_rppairing") else ""
-        print(
-            f"      {consumer.get('app_name') or consumer.get('name')}  "
-            f"{consumer.get('bundle_id')}  {consumer.get('filename')}{extra}"
-        )
-
-
-def _print_pairing_delivery(result: dict[str, Any]) -> None:
-    placed = result.get("placed") or []
-    if not placed:
-        print(
-            "No supported apps are installed on this iPhone. Sideload EscapeOS, "
-            "SideStore, AltStore, LiveContainer, or StikDebug first."
-        )
-        return
-    print(f"Placed pairing file on {len(placed)} app(s):")
-    for item in placed:
-        name = item.get("name") or item.get("bundle_id")
-        if item.get("placed"):
-            print(f"  {name}: wrote {item.get('filename')} ({item.get('bytes')} bytes)")
-        else:
-            print(f"  {name}: failed ({item.get('error')})")
-        if item.get("warning"):
-            print(f"    {item['warning']}")
-    if result.get("note") and not result.get("has_rppairing"):
-        print(result["note"])
 
 
 def _cmd_pairing(args: argparse.Namespace) -> int:
@@ -1143,19 +1104,7 @@ def _cmd_pairing(args: argparse.Namespace) -> int:
         if result.get("note"):
             print(f"  {result['note']}")
         return 0
-    if args.deliver or args.pairing_app:
-        apps_filter = [args.pairing_app] if args.pairing_app else None
-        result = pairing.deliver_to_device(udid, udid, bundle_ids=apps_filter)
-        if args.json:
-            _emit(args, result)
-            return 0
-        _print_pairing_delivery(result)
-        placed = result.get("placed") or []
-        if not placed:
-            return 0
-        return 0 if all(item.get("placed") for item in placed) else 1
-
-    report = pairing.status(udid, udid)
+    report = pairing.inspect_record(udid)
     if args.json:
         _emit(args, report)
         return 0
@@ -1399,7 +1348,7 @@ def build_parser() -> argparse.ArgumentParser:
     pairing_parser = sub.add_parser(
         "pairing",
         parents=[common, target],
-        help="export, import, create, or place this PC's pairing file on the iPhone",
+        help="export, import, or create this PC's pairing file",
     )
     pairing_actions = pairing_parser.add_mutually_exclusive_group()
     pairing_actions.add_argument(
@@ -1421,18 +1370,6 @@ def build_parser() -> argparse.ArgumentParser:
         dest="pairing_create",
         action="store_true",
         help="create Remote Pairing keys over USB (no other app required)",
-    )
-    pairing_actions.add_argument(
-        "--deliver",
-        action="store_true",
-        help="write the pairing file into every supported app installed on the device",
-    )
-    pairing_parser.add_argument(
-        "--app",
-        dest="pairing_app",
-        default=None,
-        metavar="BUNDLE_ID",
-        help="with --deliver, place only into this installed app",
     )
 
     lc_parser = sub.add_parser(

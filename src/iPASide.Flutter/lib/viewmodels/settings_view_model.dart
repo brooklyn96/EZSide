@@ -282,12 +282,7 @@ class SettingsViewModel extends BaseViewModel {
   bool get hasPairingPayload => _pairing?.hasPayload ?? false;
   bool get canExportPairing => hasPairingPayload && !_isPairingBusy;
   bool get canImportPairing => !_isPairingBusy && _devices.selectedUdid != null;
-  bool get canCreatePairing =>
-      !_isPairingBusy && (_pairing?.deviceReachable ?? false);
-  bool get canPlacePairing =>
-      hasPairingPayload &&
-      !_isPairingBusy &&
-      (_pairing?.deviceReachable ?? false);
+  bool get canCreatePairing => !_isPairingBusy && _devices.selectedUdid != null;
 
   String get pairingMessage => _pairingMessage;
   bool get hasPairingMessage => _pairingMessage.isNotEmpty;
@@ -325,7 +320,7 @@ class SettingsViewModel extends BaseViewModel {
       _setPairingMessage(
         result.hasRppairing
             ? 'Imported. Remote Pairing keys are present.'
-            : (result.note ?? 'Imported. Place it on the iPhone next.'),
+            : (result.note ?? 'Imported.'),
       );
     } on EngineShutdownException {
       return;
@@ -362,7 +357,7 @@ class SettingsViewModel extends BaseViewModel {
       _setPairingMessage(
         result.hasRppairing
             ? 'Wrote $where, with Remote Pairing keys.'
-            : 'Wrote $where. Create keys if EscapeOS on iOS 26.4+ needs them (iOS 18 can use USB pairing alone).',
+            : 'Wrote $where. Create keys if iOS 26.4+ tunnels need them.',
       );
     } on EngineShutdownException {
       return;
@@ -417,136 +412,6 @@ class SettingsViewModel extends BaseViewModel {
         notify();
       }
     }
-  }
-
-  Future<void> placePairing() async {
-    if (!canPlacePairing) return;
-    final PairingStatus? snapshot = _pairing;
-    if (snapshot == null) return;
-
-    if (snapshot.consumers.isEmpty) {
-      _setPairingMessage(
-        'No supported apps are installed. Sideload EscapeOS, SideStore, '
-        'AltStore, LiveContainer, or StikDebug first.',
-        isError: true,
-      );
-      notify();
-      return;
-    }
-
-    _isPairingBusy = true;
-    _setPairingMessage('');
-    notify();
-    try {
-      if (!snapshot.hasRppairing) {
-        final PairingCreate created = await _engine.createPairing(
-          udid: _devices.selectedUdid,
-          connection: _devices.connectionArg,
-        );
-        if (isDisposed) return;
-        if (!created.hasRppairing) {
-          _setPairingMessage(
-            created.error ??
-                created.note ??
-                'Unlock the iPhone, keep it plugged in over USB, and trust this PC.',
-            isError: true,
-          );
-          return;
-        }
-      }
-      final PairingDelivery result = await _engine.deliverPairing(
-        udid: _devices.selectedUdid,
-        connection: _devices.connectionArg,
-      );
-      if (isDisposed) return;
-      await _loadPairing();
-      if (isDisposed) return;
-      _setPairingMessage(
-        _placementMessage(result),
-        isError: !result.allPlaced,
-      );
-    } on EngineShutdownException {
-      return;
-    } catch (error) {
-      if (!isDisposed) {
-        _setPairingMessage(BaseViewModel.errorText(error), isError: true);
-      }
-    } finally {
-      if (!isDisposed) {
-        _isPairingBusy = false;
-        notify();
-      }
-    }
-  }
-
-  Future<void> placePairingOn(PairingConsumerInfo app) async {
-    final String? bundleId = app.bundleId;
-    if (bundleId == null || bundleId.isEmpty || !canPlacePairing) return;
-
-    _isPairingBusy = true;
-    _setPairingMessage('');
-    notify();
-    try {
-      if (!(_pairing?.hasRppairing ?? false) && app.needsRppairing) {
-        final PairingCreate created = await _engine.createPairing(
-          udid: _devices.selectedUdid,
-          connection: _devices.connectionArg,
-        );
-        if (isDisposed) return;
-        if (!created.hasRppairing) {
-          _setPairingMessage(
-            created.error ??
-                created.note ??
-                'Unlock the iPhone, keep it plugged in over USB, and trust this PC.',
-            isError: true,
-          );
-          return;
-        }
-      }
-      final PairingDelivery result = await _engine.deliverPairing(
-        udid: _devices.selectedUdid,
-        connection: _devices.connectionArg,
-        bundleId: bundleId,
-      );
-      if (isDisposed) return;
-      await _loadPairing();
-      if (isDisposed) return;
-      _setPairingMessage(
-        _placementMessage(result),
-        isError: !result.allPlaced,
-      );
-    } on EngineShutdownException {
-      return;
-    } catch (error) {
-      if (!isDisposed) {
-        _setPairingMessage(BaseViewModel.errorText(error), isError: true);
-      }
-    } finally {
-      if (!isDisposed) {
-        _isPairingBusy = false;
-        notify();
-      }
-    }
-  }
-
-  static String _placementMessage(PairingDelivery result) {
-    if (result.placed.isEmpty) {
-      return 'No supported apps are installed on this iPhone.';
-    }
-    final StringBuffer buffer = StringBuffer();
-    for (final PairingPlacement item in result.placed) {
-      final String name = item.name ?? item.bundleId ?? 'App';
-      if (item.placed) {
-        buffer.writeln('$name: wrote ${item.filename}.');
-      } else {
-        buffer.writeln('$name: ${item.error ?? 'could not be written'}.');
-      }
-    }
-    if (result.note != null && !result.hasRppairing) {
-      buffer.writeln();
-      buffer.write(result.note);
-    }
-    return buffer.toString().trim();
   }
 
   void _setPairingMessage(String message, {bool isError = false}) {

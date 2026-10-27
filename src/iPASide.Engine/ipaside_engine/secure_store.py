@@ -18,6 +18,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,9 @@ MAGIC = b"EZS1"
 # same user does not decrypt here by accident.
 _ENTROPY = b"EZSide"
 _CRYPTPROTECT_UI_FORBIDDEN = 0x1
+
+_REPLACE_TRIES = 5
+_REPLACE_WAIT = 0.05
 
 
 class _DataBlob(ctypes.Structure):
@@ -79,6 +83,19 @@ def unprotect(blob: bytes) -> bytes:
     return _dpapi("CryptUnprotectData", blob)
 
 
+def _replace(temp: str, path: Path) -> None:
+    """os.replace, retried briefly: on Windows it fails with PermissionError while
+    another process (a second engine, a virus scanner) has the target open."""
+    for attempt in range(_REPLACE_TRIES):
+        try:
+            os.replace(temp, path)
+            return
+        except PermissionError:
+            if attempt == _REPLACE_TRIES - 1:
+                raise
+            time.sleep(_REPLACE_WAIT)
+
+
 def write_bytes(path: Path, data: bytes) -> None:
     """Write [data] protected, atomically (temp file in the same folder, then replace)."""
     path = Path(path)
@@ -90,7 +107,7 @@ def write_bytes(path: Path, data: bytes) -> None:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temp, path)
+        _replace(temp, path)
     except BaseException:
         Path(temp).unlink(missing_ok=True)
         raise

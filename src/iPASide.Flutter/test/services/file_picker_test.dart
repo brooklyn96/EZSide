@@ -35,8 +35,7 @@ void main() {
       ]);
     });
 
-    test('the pairing dialogs name both plist forms SideStore and EscapeOS use',
-        () {
+    test('the pairing dialogs name both plist forms', () {
       expect(
         NativeFilePickerService.pairingOpenTitle,
         'Choose a pairing file',

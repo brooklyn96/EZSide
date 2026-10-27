@@ -518,18 +518,13 @@ void main() {
   });
 
   group('pairing models', () {
-    test('PairingStatus reads consumers and remote-pairing flags', () {
+    test('PairingStatus reads the remote-pairing flags', () {
       final PairingStatus status = PairingStatus.fromJson(_decode(
-        '{"source":"imported","has_lockdown":true,"has_rppairing":true,'
-        '"consumers":[{"id":"escapeos","name":"EscapeOS",'
-        '"bundle_id":"com.ipaside.escapeos.TEAM","needs_rppairing":true}]}',
+        '{"source":"imported","has_lockdown":true,"has_rppairing":true}',
       ));
 
       expect(status.hasPayload, isTrue);
       expect(status.hasRppairing, isTrue);
-      expect(status.consumers, hasLength(1));
-      expect(status.consumers.single.needsRppairing, isTrue);
-      expect(status.consumers.single.label, 'EscapeOS');
     });
 
     test('PairingStatus degrades a missing payload to none', () {
@@ -537,17 +532,6 @@ void main() {
 
       expect(status.source, 'none');
       expect(status.hasPayload, isFalse);
-      expect(status.consumers, isEmpty);
-    });
-
-    test('PairingDelivery.allPlaced is false when any write failed', () {
-      final PairingDelivery delivery = PairingDelivery.fromJson(_decode(
-        '{"placed":[{"name":"EscapeOS","placed":true},'
-        '{"name":"SideStore","placed":false,"error":"busy"}]}',
-      ));
-
-      expect(delivery.allPlaced, isFalse);
-      expect(delivery.placed.last.error, 'busy');
     });
 
     test('PairingCreate reads created and remote-pairing flags', () {

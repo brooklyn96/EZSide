@@ -59,8 +59,8 @@ class NativeFilePickerService implements FilePickerService {
     FileDialogFilter.allFiles,
   ];
 
-  /// Type dropdown for pairing files. EscapeOS and StikDebug use `.plist`;
-  /// SideStore and AltStore use `.mobiledevicepairing`. Both are XML plists.
+  /// Type dropdown for pairing files: `.plist` and `.mobiledevicepairing`
+  /// are both XML plists.
   static const List<FileDialogFilter> pairingFilters = <FileDialogFilter>[
     FileDialogFilter(
       label: 'Pairing file (*.plist;*.mobiledevicepairing)',

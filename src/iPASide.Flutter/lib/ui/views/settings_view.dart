@@ -174,7 +174,7 @@ class _DeviceSection extends StatelessWidget {
   }
 }
 
-/// This PC's pairing file for the selected iPhone, and the apps that read it.
+/// This PC's pairing file for the selected iPhone: create, import, export.
 class _PairingSection extends StatelessWidget {
   const _PairingSection({required this.vm});
 
@@ -196,14 +196,13 @@ class _PairingSection extends StatelessWidget {
         else ...[
           SettingsRow(
             title: 'USB pairing',
-            description:
-                'Created when you tap Trust on the iPhone. SideStore and AltStore use this half.',
+            description: 'Created when you tap Trust on the iPhone.',
             control: SettingsValue(vm.pairingUsbText),
           ),
           SettingsRow(
             title: 'Remote Pairing',
             description:
-                'Created over USB by EZSide, same as iLoader. EscapeOS needs this on iOS 26.4+; iOS 18 can use the USB-trust half. The phone does not stay plugged in to use the app.',
+                'Created over USB by EZSide, same as iLoader. Needed for iOS 26.4+ tunnels; the USB-trust half is enough before that.',
             control: SettingsValue(vm.pairingRemoteText),
           ),
           SettingsRow(
@@ -234,18 +233,6 @@ class _PairingSection extends StatelessWidget {
                 ),
               ],
             ),
-          ),
-          SettingsRow(
-            title: 'Place on the iPhone',
-            description:
-                'Writes the file into every supported app\u2019s Documents folder, under the name that app looks for.',
-            control: AppButton(
-              label: 'Place in all apps',
-              tone: ButtonTone.primary,
-              compact: true,
-              busy: vm.isPairingBusy,
-              onPressed: vm.canPlacePairing ? vm.placePairing : null,
-            ),
             detail: vm.hasPairingMessage
                 ? SettingsStatusLine(
                     text: vm.pairingMessage,
@@ -253,56 +240,13 @@ class _PairingSection extends StatelessWidget {
                   )
                 : null,
           ),
-          ..._apps(context, vm),
+          if (vm.pairing == null)
+            SettingsBlock(
+              child: Text('No iPhone selected.', style: context.t.smallMuted),
+            ),
         ],
       ],
     );
-  }
-
-  List<Widget> _apps(BuildContext context, SettingsViewModel vm) {
-    final PairingStatus? status = vm.pairing;
-    if (status == null) {
-      return <Widget>[
-        SettingsBlock(
-          child: Text('No iPhone selected.', style: context.t.smallMuted),
-        ),
-      ];
-    }
-    if (!status.deviceReachable) {
-      return <Widget>[
-        SettingsBlock(
-          child: Text(
-            status.deviceError ?? 'Installed apps could not be listed.',
-            style: context.t.smallMuted,
-          ),
-        ),
-      ];
-    }
-    if (status.consumers.isEmpty) {
-      return <Widget>[
-        SettingsBlock(
-          child: Text(
-            'No supported apps are installed. Sideload EscapeOS, SideStore, '
-            'AltStore, LiveContainer, or StikDebug first.',
-            style: context.t.smallMuted,
-          ),
-        ),
-      ];
-    }
-    return <Widget>[
-      for (final PairingConsumerInfo app in status.consumers)
-        SettingsRow(
-          title: app.label,
-          description: app.filename ?? app.bundleId,
-          control: AppButton(
-            label: 'Place',
-            compact: true,
-            busy: vm.isPairingBusy,
-            onPressed:
-                vm.canPlacePairing ? () => vm.placePairingOn(app) : null,
-          ),
-        ),
-    ];
   }
 }
 

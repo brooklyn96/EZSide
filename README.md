@@ -94,7 +94,7 @@ can tidy up without breaking something you did not know was there.
 ![Account](docs/screenshots/account.png)
 
 **Settings** — pick your connection, manage this PC's pairing file (create keys,
-place into EscapeOS and other apps), decide whether to keep signed `.ipa` files
+import, export), decide whether to keep signed `.ipa` files
 and where they go, and turn on background refresh.
 
 ![Settings](docs/screenshots/settings.png)
@@ -121,17 +121,10 @@ There is a full light theme too, and the sun in the title bar switches to it.
   the phone itself. Then **put apps inside it straight from iPASide** — they are never
   installed on the phone, so they use none of your three slots, and they have no 7-day
   expiry of their own. Verified end to end on an iPhone 8 Plus with a free Apple ID.
-- **Refresh on the phone, no PC.** iPASide installs the LiveContainer build that carries
-  SideStore and hands it this computer's pairing file, so the phone can re-sign its own
-  apps. It needs a local device VPN connected, and an iOS Shortcut named `TurnOffData`
-  that iPASide cannot create for you — the app says so rather than letting you find out.
-- **Place a pairing file on the phone.** Settings does the same job as iLoader:
-  USB Trust keys for SideStore / AltStore / LiveContainer on iLoader's iOS range
-  (15–26), plus Remote Pairing keys over USB for EscapeOS and StikDebug on
-  iOS 26.4+. Import an iLoader file if you already have one. After Place, unplug —
-  those apps talk to the phone over LocalDevVPN, not a live USB cable.
-
-  <img src="docs/brand/escapeos.png" alt="EscapeOS" width="48" height="48">
+- **Keep this PC's pairing file.** Settings creates the Remote Pairing keys over USB
+  (iOS 26.4+ tunnels need them, on top of the USB Trust keys), imports an iLoader file
+  if you already have one, and exports the file so you can move it yourself. EZSide
+  never writes it into an app on the phone.
 - **See and manage your Apple ID's account.** Certificates, App IDs and devices, for any
   Apple ID you have signed in. Each certificate says which tool registered it, because
   Apple counts them per machine and revoking the wrong one breaks a different tool's apps.
@@ -268,7 +261,7 @@ The engine works on its own, without the app. Every command takes `--json`:
 | `signed` | Report or clean up kept `.ipa` files (`--clean`) |
 | `slots` / `revoke-cert` / `delete-app-id` | An Apple ID's certificates, App IDs and devices; `--email` picks which account |
 | `apps` / `uninstall` | Apps installed on the device |
-| `pairing` | Export, import, create, or place this PC's pairing file (`--export`, `--import`, `--create`, `--deliver`) |
+| `pairing` | Show, export, import, or create this PC's pairing file (`--export`, `--import`, `--create`) |
 
 Device commands take `--udid` to pick a phone and `--connection usb|wifi|auto` to
 pick how to reach it.
@@ -277,7 +270,7 @@ pick how to reach it.
 
 Working end to end, and verified that way rather than assumed: iPASide signs and
 installs real apps onto a physical **iPhone 8 Plus (iOS 16.7.15)** with a free
-Apple ID, over USB. Pairing import, EscapeOS sideload, and pairing placement were
+Apple ID, over USB. Pairing import and create were
 verified on a physical **iPhone 17 (iOS 26.5.1)** with this 1.2.5 installer.
 Each release is installed and driven against a real device before it is published.
 
@@ -303,7 +296,7 @@ and lints are errors, not warnings. The badge above links to the runs.
 
 What tests cannot cover is a real phone, so each release is also driven by hand
 before it is published. Sideload over USB and Wi-Fi is verified on an iPhone 8 Plus
-(iOS 16.7.15); pairing-file create/place and EscapeOS on an iPhone 17 (iOS 26.5.1).
+(iOS 16.7.15); pairing-file create and import on an iPhone 17 (iOS 26.5.1).
 Several things in the changelog were found that way rather than by reasoning: the
 free-account three-app ceiling is per *device* and not per Apple ID, and a background
 refresh really does re-sign and reinstall with the app closed.

@@ -575,14 +575,6 @@ void main() {
             'source': 'imported',
             'has_lockdown': true,
             'has_rppairing': true,
-            'consumers': <dynamic>[
-              <String, dynamic>{
-                'id': 'escapeos',
-                'name': 'EscapeOS',
-                'bundle_id': 'com.ipaside.escapeos.TEAM',
-                'needs_rppairing': true,
-              },
-            ],
           },
         ),
       );
@@ -598,10 +590,9 @@ void main() {
       ]);
       expect(status.source, 'imported');
       expect(status.hasRppairing, isTrue);
-      expect(status.consumers.single.id, 'escapeos');
     });
 
-    test('exportPairing, importPairing and deliverPairing forward flags',
+    test('exportPairing, importPairing and createPairing forward flags',
         () async {
       final _FakeRunner runner = _FakeRunner(
         result: const EngineResult(
@@ -610,7 +601,6 @@ void main() {
             'exported': true,
             'path': r'D:\pairingFile.plist',
             'imported': true,
-            'placed': <dynamic>[],
           },
         ),
       );
@@ -634,19 +624,6 @@ void main() {
         'U',
         '--connection',
         'usb',
-      ]);
-
-      await api.deliverPairing(udid: 'U');
-      expect(runner.lastArgs, <String>['pairing', '--deliver', '--udid', 'U']);
-
-      await api.deliverPairing(udid: 'U', bundleId: 'com.ipaside.escapeos.TEAM');
-      expect(runner.lastArgs, <String>[
-        'pairing',
-        '--deliver',
-        '--app',
-        'com.ipaside.escapeos.TEAM',
-        '--udid',
-        'U',
       ]);
 
       await api.createPairing(udid: 'U');
@@ -806,6 +783,29 @@ void main() {
       );
     });
 
+    test('refresh maps per-app outcomes', () async {
+      final _FakeRunner runner = _FakeRunner(
+        result: const EngineResult(
+          ok: true,
+          data: <String, dynamic>{
+            'refreshed': <dynamic>[
+              <String, dynamic>{'bundle_id': 'com.a', 'status': 'refreshed'},
+              <String, dynamic>{
+                'bundle_id': 'com.b',
+                'status': 'error',
+                'error': 'no device',
+              },
+            ],
+          },
+        ),
+      );
+
+      final RefreshSummary summary = await EngineApi(runner).refresh(all: true);
+
+      expect(summary.refreshed, hasLength(2));
+      expect(summary.refreshed.last.error, 'no device');
+    });
+
     test('refresh returns the per-app list when some apps failed', () async {
       // The engine exits 2 on a partial failure, so the serve frame is ok:false
       // but still carries `refreshed`; throwing would hide which apps failed.
@@ -846,29 +846,6 @@ void main() {
         EngineApi(runner).refresh(),
         throwsA(isA<EngineException>()),
       );
-    });
-
-    test('refresh maps per-app outcomes', () async {
-      final _FakeRunner runner = _FakeRunner(
-        result: const EngineResult(
-          ok: true,
-          data: <String, dynamic>{
-            'refreshed': <dynamic>[
-              <String, dynamic>{'bundle_id': 'com.a', 'status': 'refreshed'},
-              <String, dynamic>{
-                'bundle_id': 'com.b',
-                'status': 'error',
-                'error': 'no device',
-              },
-            ],
-          },
-        ),
-      );
-
-      final RefreshSummary summary = await EngineApi(runner).refresh(all: true);
-
-      expect(summary.refreshed, hasLength(2));
-      expect(summary.refreshed.last.error, 'no device');
     });
 
     test('signed reads the engine folder when none is given', () async {

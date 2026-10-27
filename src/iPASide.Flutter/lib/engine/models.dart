@@ -1022,71 +1022,7 @@ class LiveContainerStatus {
       'launched: $launched)';
 }
 
-/// One installed app that reads a pairing file out of its own Documents folder.
-class PairingConsumerInfo {
-  /// Creates a consumer row.
-  const PairingConsumerInfo({
-    this.id,
-    this.name,
-    this.bundleId,
-    this.appName,
-    this.filename,
-    this.needsRppairing = false,
-  });
-
-  /// Parses one `consumers[]` entry from `pairing`.
-  factory PairingConsumerInfo.fromJson(Map<String, dynamic> json) =>
-      PairingConsumerInfo(
-        id: jsonString(json, 'id'),
-        name: jsonString(json, 'name'),
-        bundleId: jsonString(json, 'bundle_id'),
-        appName: jsonString(json, 'app_name'),
-        filename: jsonString(json, 'filename'),
-        needsRppairing: jsonBool(json, 'needs_rppairing'),
-      );
-
-  /// Catalogue id, e.g. `escapeos`.
-  final String? id;
-
-  /// Product name iPASide uses, e.g. `EscapeOS`.
-  final String? name;
-
-  /// Team-scoped bundle id on the phone.
-  final String? bundleId;
-
-  /// Display name the device reports.
-  final String? appName;
-
-  /// File name that app looks for in Documents.
-  final String? filename;
-
-  /// Whether that app's iOS 26 path needs Remote Pairing keys, not USB lockdown alone.
-  final bool needsRppairing;
-
-  /// The name the card should show: the phone's label, then the catalogue name.
-  String get label => appName ?? name ?? bundleId ?? 'App';
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is PairingConsumerInfo &&
-          other.id == id &&
-          other.name == name &&
-          other.bundleId == bundleId &&
-          other.appName == appName &&
-          other.filename == filename &&
-          other.needsRppairing == needsRppairing;
-
-  @override
-  int get hashCode =>
-      Object.hash(id, name, bundleId, appName, filename, needsRppairing);
-
-  @override
-  String toString() =>
-      'PairingConsumerInfo($id, $bundleId, needsRppairing: $needsRppairing)';
-}
-
-/// What this PC holds for one device's pairing file, and which apps can consume it.
+/// What this PC holds for one device's pairing file.
 class PairingStatus {
   /// Creates a pairing snapshot.
   const PairingStatus({
@@ -1099,9 +1035,6 @@ class PairingStatus {
     this.bytes = 0,
     this.note,
     this.error,
-    this.consumers = const <PairingConsumerInfo>[],
-    this.deviceReachable = false,
-    this.deviceError,
   });
 
   /// Parses a `pairing` status payload.
@@ -1115,9 +1048,6 @@ class PairingStatus {
         bytes: jsonInt(json, 'bytes'),
         note: jsonString(json, 'note'),
         error: jsonString(json, 'error'),
-        consumers: jsonObjectList(json, 'consumers', PairingConsumerInfo.fromJson),
-        deviceReachable: jsonBool(json, 'device_reachable'),
-        deviceError: jsonString(json, 'device_error'),
       );
 
   /// Device this record is for.
@@ -1129,7 +1059,7 @@ class PairingStatus {
   /// Whether USB pairing certificates are present.
   final bool hasLockdown;
 
-  /// Whether Remote Pairing keys EscapeOS needs on iOS 26.4+ are present.
+  /// Whether Remote Pairing keys (iOS 26.4+ tunnels) are present.
   final bool hasRppairing;
 
   /// Whether iPASide is storing a created or imported pairing file for this UDID.
@@ -1138,7 +1068,7 @@ class PairingStatus {
   /// Path of that imported file on this PC, when [imported] is true.
   final String? importedPath;
 
-  /// Size of the XML payload that would be exported or placed.
+  /// Size of the XML payload that would be exported.
   final int bytes;
 
   /// Honest sentence about whether the file is enough for current iOS.
@@ -1147,16 +1077,7 @@ class PairingStatus {
   /// Why no payload could be built, when [source] is `none`.
   final String? error;
 
-  /// Supported apps currently installed on the phone.
-  final List<PairingConsumerInfo> consumers;
-
-  /// Whether the engine could list apps on the device.
-  final bool deviceReachable;
-
-  /// Why the device could not be listed, when [deviceReachable] is false.
-  final String? deviceError;
-
-  /// A file exists that export and place can write.
+  /// A file exists that export can write.
   bool get hasPayload => source == 'imported' || source == 'lockdown';
 
   @override
@@ -1171,10 +1092,7 @@ class PairingStatus {
           other.importedPath == importedPath &&
           other.bytes == bytes &&
           other.note == note &&
-          other.error == error &&
-          _listEquals(other.consumers, consumers) &&
-          other.deviceReachable == deviceReachable &&
-          other.deviceError == deviceError;
+          other.error == error;
 
   @override
   int get hashCode => Object.hash(
@@ -1187,15 +1105,11 @@ class PairingStatus {
         bytes,
         note,
         error,
-        Object.hashAll(consumers),
-        deviceReachable,
-        deviceError,
       );
 
   @override
   String toString() =>
-      'PairingStatus(source: $source, hasRppairing: $hasRppairing, '
-      'consumers: ${consumers.length})';
+      'PairingStatus(source: $source, hasRppairing: $hasRppairing)';
 }
 
 /// Outcome of writing the pairing file to disk.
@@ -1374,171 +1288,6 @@ class PairingCreate {
   @override
   String toString() =>
       'PairingCreate(created: $created, hasRppairing: $hasRppairing)';
-}
-
-/// One app the pairing file was written into, or the reason it was not.
-class PairingPlacement {
-  /// Creates a per-app placement outcome.
-  const PairingPlacement({
-    this.id,
-    this.name,
-    this.bundleId,
-    this.filename,
-    this.placed = false,
-    this.bytes = 0,
-    this.written = const <String>[],
-    this.error,
-    this.warning,
-  });
-
-  /// Parses one `placed[]` entry from `pairing --deliver`.
-  factory PairingPlacement.fromJson(Map<String, dynamic> json) =>
-      PairingPlacement(
-        id: jsonString(json, 'id'),
-        name: jsonString(json, 'name'),
-        bundleId: jsonString(json, 'bundle_id'),
-        filename: jsonString(json, 'filename'),
-        placed: jsonBool(json, 'placed'),
-        bytes: jsonInt(json, 'bytes'),
-        written: jsonStringList(json, 'written'),
-        error: jsonString(json, 'error'),
-        warning: jsonString(json, 'warning'),
-      );
-
-  /// Catalogue id.
-  final String? id;
-
-  /// Product name.
-  final String? name;
-
-  /// Bundle id written into.
-  final String? bundleId;
-
-  /// File name written.
-  final String? filename;
-
-  /// Whether House Arrest accepted the write.
-  final bool placed;
-
-  /// Size of the payload written.
-  final int bytes;
-
-  /// Container paths written.
-  final List<String> written;
-
-  /// Why the write failed, when [placed] is false.
-  final String? error;
-
-  /// iOS 26 completeness warning that did not block the write.
-  final String? warning;
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is PairingPlacement &&
-          other.id == id &&
-          other.name == name &&
-          other.bundleId == bundleId &&
-          other.filename == filename &&
-          other.placed == placed &&
-          other.bytes == bytes &&
-          _listEquals(other.written, written) &&
-          other.error == error &&
-          other.warning == warning;
-
-  @override
-  int get hashCode => Object.hash(
-        id,
-        name,
-        bundleId,
-        filename,
-        placed,
-        bytes,
-        Object.hashAll(written),
-        error,
-        warning,
-      );
-
-  @override
-  String toString() =>
-      'PairingPlacement($name, placed: $placed, error: $error)';
-}
-
-/// Outcome of writing the pairing file into every supported app on the phone.
-class PairingDelivery {
-  /// Creates a delivery outcome.
-  const PairingDelivery({
-    this.udid,
-    this.hasLockdown = false,
-    this.hasRppairing = false,
-    this.note,
-    this.bytes = 0,
-    this.placed = const <PairingPlacement>[],
-    this.supportedInstalled = 0,
-  });
-
-  /// Parses a `pairing --deliver` payload.
-  factory PairingDelivery.fromJson(Map<String, dynamic> json) => PairingDelivery(
-        udid: jsonString(json, 'udid'),
-        hasLockdown: jsonBool(json, 'has_lockdown'),
-        hasRppairing: jsonBool(json, 'has_rppairing'),
-        note: jsonString(json, 'note'),
-        bytes: jsonInt(json, 'bytes'),
-        placed: jsonObjectList(json, 'placed', PairingPlacement.fromJson),
-        supportedInstalled: jsonInt(json, 'supported_installed'),
-      );
-
-  /// Device the file was placed on.
-  final String? udid;
-
-  /// Whether the payload had USB pairing certificates.
-  final bool hasLockdown;
-
-  /// Whether the payload had Remote Pairing keys.
-  final bool hasRppairing;
-
-  /// Honest sentence about iOS 26 completeness.
-  final String? note;
-
-  /// Size of the payload written.
-  final int bytes;
-
-  /// Per-app outcomes, in bundle-id order.
-  final List<PairingPlacement> placed;
-
-  /// How many supported apps were installed, including failed writes.
-  final int supportedInstalled;
-
-  /// Every targeted app accepted the file.
-  bool get allPlaced =>
-      placed.isNotEmpty && placed.every((PairingPlacement item) => item.placed);
-
-  @override
-  bool operator ==(Object other) =>
-      identical(this, other) ||
-      other is PairingDelivery &&
-          other.udid == udid &&
-          other.hasLockdown == hasLockdown &&
-          other.hasRppairing == hasRppairing &&
-          other.note == note &&
-          other.bytes == bytes &&
-          _listEquals(other.placed, placed) &&
-          other.supportedInstalled == supportedInstalled;
-
-  @override
-  int get hashCode => Object.hash(
-        udid,
-        hasLockdown,
-        hasRppairing,
-        note,
-        bytes,
-        Object.hashAll(placed),
-        supportedInstalled,
-      );
-
-  @override
-  String toString() =>
-      'PairingDelivery(placed: ${placed.length}, hasRppairing: $hasRppairing)';
 }
 
 /// How the signing certificate was delivered at the end of a setup.

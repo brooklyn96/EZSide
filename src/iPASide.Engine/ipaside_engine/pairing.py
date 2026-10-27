@@ -1,136 +1,50 @@
-"""Pairing files this PC holds, and the apps on the phone that consume them.
+"""This PC's pairing file for an iPhone: status, export, import, and create.
 
-A pairing file is this computer's trusted identity with one iPhone. SideStore,
-AltStore, LiveContainer, EscapeOS, and StikDebug each look for that file in their
-own Documents folder, under a name of their own. iPASide already had the SideStore
-path; this module is the one place that knows every consumer, can export the file,
-can create the Remote Pairing half over USB, and can still import a file another
-tool wrote.
-
-This is the same job iLoader's pairing manager does, on the same iOS range
-iLoader documents for sideload (15.0–15.8.5, 16.0–17.7.7, 18.0–26.x): Trust
-creates the lockdown half; iPASide adds Remote Pairing keys over that USB
-channel when the phone has CoreDevice (iOS 17+). EscapeOS only supports iOS 18
-and 26; other consumers still get a pairing file on iLoader's full range.
+A pairing file is this computer's trusted identity with one iPhone. This module
+reads the usbmux record Windows keeps, can export it to a file, can create the
+Remote Pairing half over USB, and can still import a file another tool wrote
+(iLoader, for example). EZSide never writes the file into an app on the phone:
+the user moves an exported file themselves.
 
 Windows usbmux writes the lockdown half (certificates, HostID, escrow) and omits
 ``UDID`` because the file name carries it. Remote Pairing keys (``identifier``,
 Ed25519 ``public_key`` / ``private_key``, ``alt_irk``) are not in that record.
-iOS 26.4 and later tunnels that EscapeOS and StikDebug use need those keys.
-iPASide creates them itself over the already-trusted USB lockdown channel
-(promptless; no second Trust dialog). Importing an iLoader file remains optional.
-The phone does not stay plugged in to *use* those apps — USB is only to mint
-and place the file.
+iOS 26.4 and later tunnels need those keys. EZSide creates them itself over the
+already-trusted USB lockdown channel (promptless; no second Trust dialog).
+Importing an iLoader file remains optional.
 """
 
 from __future__ import annotations
 
-import asyncio
 import plistlib
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
-from . import apps, paths, secure_store
+from . import paths, secure_store
 from .errors import EngineError
 
 #: Where usbmux keeps the pairing records this PC has for its devices.
-_APPLE_LOCKDOWN_DIR = Path(r"C:\ProgramData\Apple\Lockdown")
-_LOCKDOWN_DIR = _APPLE_LOCKDOWN_DIR
+_LOCKDOWN_DIR = Path(r"C:\ProgramData\Apple\Lockdown")
 
 #: Keys iLoader adds so a Remote Pairing tunnel can start. ``alt_irk`` is useful
 #: but not required for ``rp_pairing_file_read``.
 _RP_REQUIRED_KEYS = ("identifier", "public_key", "private_key")
 
-#: Why a lockdown-only file is not enough for EscapeOS on current iOS.
+#: Why a lockdown-only file is not enough for iOS 26.4 and later tunnels.
 MISSING_RP_WARNING = (
-    "This file has this PC's USB pairing keys, which SideStore and AltStore use "
-    "(same as iLoader, including iOS 15–18). "
-    "EscapeOS and StikDebug on iOS 26.4 and later also need Remote Pairing keys. "
-    "Plug the iPhone in over USB once, let EZSide create them, then place the file. "
-    "The cable is not needed afterwards."
+    "This file has this PC's USB pairing keys only (same as iLoader, including iOS 15-18). "
+    "iOS 26.4 and later tunnels also need Remote Pairing keys. "
+    "Plug the iPhone in over USB once and let EZSide create them, then export the file again."
 )
 
 HAS_RP_NOTE = (
     "This file is the iLoader-style merge: USB pairing plus Remote Pairing keys. "
-    "EscapeOS can use it on iOS 18 (lockdown loopback) and iOS 26.4+ (Remote Pairing). "
     "The phone does not need to stay connected to this PC."
 )
 
 
 class PairingError(EngineError):
-    """The pairing file could not be read, imported, exported, or placed."""
-
-
-@dataclass(frozen=True)
-class PairingConsumer:
-    """One installed app that reads a pairing file out of its own container."""
-
-    id: str
-    name: str
-    filename: str
-    directories: tuple[str, ...]
-    needs_rppairing: bool
-    prefixes: tuple[str, ...]
-
-    def matches(self, bundle_id: str) -> bool:
-        """True when ``bundle_id`` is this app, including a team-id suffix."""
-        lowered = bundle_id.lower()
-        for prefix in self.prefixes:
-            needle = prefix.lower()
-            if lowered == needle or lowered.startswith(f"{needle}."):
-                return True
-        return False
-
-
-#: LiveContainer's SideStore Documents, kept here so pairing placement and the
-#: LiveContainer setup path write the same file to the same place.
-SIDESTORE_DOCUMENTS = "/Documents/SideStore/Documents"
-ALT_PAIRING_NAME = "ALTPairingFile.mobiledevicepairing"
-RP_PAIRING_NAME = "pairingFile.plist"
-
-CONSUMERS: tuple[PairingConsumer, ...] = (
-    PairingConsumer(
-        id="escapeos",
-        name="EscapeOS",
-        filename=RP_PAIRING_NAME,
-        directories=("/Documents",),
-        needs_rppairing=True,
-        prefixes=("com.ipaside.escapeos",),
-    ),
-    PairingConsumer(
-        id="livecontainer",
-        name="LiveContainer",
-        filename=ALT_PAIRING_NAME,
-        directories=(SIDESTORE_DOCUMENTS, "/Documents"),
-        needs_rppairing=False,
-        prefixes=("com.kdt.livecontainer",),
-    ),
-    PairingConsumer(
-        id="sidestore",
-        name="SideStore",
-        filename=ALT_PAIRING_NAME,
-        directories=("/Documents",),
-        needs_rppairing=False,
-        prefixes=("com.sidestore.sidestore",),
-    ),
-    PairingConsumer(
-        id="altstore",
-        name="AltStore",
-        filename=ALT_PAIRING_NAME,
-        directories=("/Documents",),
-        needs_rppairing=False,
-        prefixes=("com.rileytestut.altstore",),
-    ),
-    PairingConsumer(
-        id="stikdebug",
-        name="StikDebug",
-        filename=RP_PAIRING_NAME,
-        directories=("/Documents",),
-        needs_rppairing=True,
-        prefixes=("com.stik.stikdebug", "com.stik.stikjit"),
-    ),
-)
+    """The pairing file could not be read, imported, exported, or created."""
 
 
 def pairing_dir() -> Path:
@@ -147,27 +61,6 @@ def pairing_dir() -> Path:
     return path
 
 
-def match_consumer(bundle_id: str) -> PairingConsumer | None:
-    """The consumer ``bundle_id`` belongs to, or None when it is not one of ours."""
-    for consumer in CONSUMERS:
-        if consumer.matches(bundle_id):
-            return consumer
-    return None
-
-
-def _resolve_installed_consumer(requested: str, installed: dict[str, Any]) -> str | None:
-    """Exact installed bundle id, or the team-suffixed install matching ``requested``."""
-    if requested in installed:
-        return requested
-    consumer = match_consumer(requested)
-    if consumer is None:
-        return None
-    for bundle_id in installed:
-        if consumer.matches(bundle_id):
-            return bundle_id
-    return None
-
-
 def has_lockdown_keys(record: dict[str, Any]) -> bool:
     """True when the record can drive a lockdown / minimuxer session."""
     return bool(record.get("DeviceCertificate") and record.get("HostCertificate"))
@@ -178,24 +71,12 @@ def has_rppairing_keys(record: dict[str, Any]) -> bool:
     return all(record.get(key) not in (None, b"", "") for key in _RP_REQUIRED_KEYS)
 
 
-def lockdown_xml(udid: str, *, lockdown_dir: Path | None = None) -> bytes:
-    """This PC's usbmux record for ``udid``, with the ``UDID`` key SideStore needs.
-
-    usbmux writes every key a lockdown session needs but not ``UDID`` - the file
-    name carries that. SideStore is handed the file on its own, with no name to
-    read, so without the key it rejects an otherwise complete record as invalid.
-    """
-    record = _load_lockdown(udid, lockdown_dir or _LOCKDOWN_DIR)
-    record.setdefault("UDID", udid)
-    return plistlib.dumps(record, fmt=plistlib.FMT_XML)
-
-
 def payload_bytes(udid: str, *, lockdown_dir: Path | None = None) -> bytes:
-    """The pairing file that should be exported or placed for ``udid``.
+    """The pairing file that should be exported for ``udid``.
 
     An imported or iPASide-created file wins, because that is the one that carries
     Remote Pairing keys. Missing lockdown keys in the store are filled from usbmux
-    so a Remote-Pairing-only document still works for SideStore. With no store,
+    so a Remote-Pairing-only document still carries the USB half. With no store,
     this is the usbmux record plus ``UDID``.
     """
     record = payload_record(udid, lockdown_dir=lockdown_dir)
@@ -259,16 +140,6 @@ def inspect_record(udid: str, *, lockdown_dir: Path | None = None) -> dict[str, 
         "note": HAS_RP_NOTE if has_rp else (MISSING_RP_WARNING if record else None),
         "error": error,
     }
-
-
-def status(udid: str, serial: str | None = None, *, lockdown_dir: Path | None = None) -> dict[str, Any]:
-    """PC-side pairing health plus which supported apps are actually installed."""
-    report = inspect_record(udid, lockdown_dir=lockdown_dir)
-    consumers, reachable, device_error = _installed_consumers(serial or udid)
-    report["consumers"] = consumers
-    report["device_reachable"] = reachable
-    report["device_error"] = device_error
-    return report
 
 
 def export_to(udid: str, destination: str | Path, *, lockdown_dir: Path | None = None) -> dict[str, Any]:
@@ -375,38 +246,6 @@ def create_remote_pairing(
     return report
 
 
-def ensure_remote_pairing(
-    udid: str,
-    serial: str | None = None,
-    *,
-    lockdown_dir: Path | None = None,
-) -> dict[str, Any]:
-    """Create Remote Pairing keys when this PC does not already have them."""
-    return create_remote_pairing(
-        udid, serial, force=False, lockdown_dir=lockdown_dir
-    )
-
-
-def _uses_apple_lockdown(lockdown_dir: Path | None) -> bool:
-    """True when this call is about the real usbmux folder, not a test double."""
-    directory = lockdown_dir or _LOCKDOWN_DIR
-    return directory == _APPLE_LOCKDOWN_DIR
-
-
-def _maybe_ensure_remote_pairing(
-    udid: str,
-    serial: str | None,
-    lockdown_dir: Path | None,
-) -> None:
-    """Best-effort Remote Pairing create before a place, never on unit-test lockdown dirs."""
-    if not _uses_apple_lockdown(lockdown_dir):
-        return
-    try:
-        ensure_remote_pairing(udid, serial, lockdown_dir=lockdown_dir)
-    except PairingError:
-        return
-
-
 def _remote_pair_keys(udid: str, serial: str | None = None) -> dict[str, Any]:
     """Ask the phone for a Remote Pairing identity over USB lockdown.
 
@@ -461,7 +300,7 @@ def _remote_pair_keys(udid: str, serial: str | None = None) -> dict[str, Any]:
     if not public or not private:
         raise PairingError(
             "Remote Pairing did not write public_key and private_key, so the "
-            "file would not work in EscapeOS."
+            "file would have no Remote Pairing keys."
         )
     keys: dict[str, Any] = {
         "identifier": str(parsed.get("identifier") or parsed.get("host_identifier") or generate_host_id()),
@@ -472,186 +311,6 @@ def _remote_pair_keys(udid: str, serial: str | None = None) -> dict[str, Any]:
     if alt:
         keys["alt_irk"] = alt
     return keys
-
-
-def deliver_to_app(
-    bundle_id: str,
-    udid: str,
-    serial: str | None = None,
-    *,
-    consumer: PairingConsumer | None = None,
-    payload: bytes | None = None,
-    lockdown_dir: Path | None = None,
-) -> dict[str, Any]:
-    """Write the pairing file into one installed app's Documents."""
-    matched = consumer or match_consumer(bundle_id)
-    if matched is None:
-        raise PairingError(
-            f"{bundle_id} is not a pairing-file consumer EZSide knows about."
-        )
-    body = payload if payload is not None else payload_bytes(udid, lockdown_dir=lockdown_dir)
-    record = plistlib.loads(body)
-    warning = None
-    if matched.needs_rppairing and not has_rppairing_keys(record):
-        warning = MISSING_RP_WARNING
-    try:
-        written = _write_into(bundle_id, serial, {matched.filename: body}, matched.directories)
-    except Exception as exc:  # noqa: BLE001 - any transport failure means the same thing
-        return {
-            "id": matched.id,
-            "name": matched.name,
-            "bundle_id": bundle_id,
-            "filename": matched.filename,
-            "placed": False,
-            "error": str(exc),
-            "warning": warning,
-        }
-    return {
-        "id": matched.id,
-        "name": matched.name,
-        "bundle_id": bundle_id,
-        "filename": matched.filename,
-        "placed": True,
-        "bytes": len(body),
-        "written": written,
-        "warning": warning,
-    }
-
-
-def deliver_if_consumer(
-    bundle_id: str,
-    udid: str,
-    serial: str | None = None,
-    *,
-    skip_ids: Iterable[str] = (),
-    lockdown_dir: Path | None = None,
-) -> dict[str, Any] | None:
-    """Place the pairing file after a sideload, or None when the app does not use one.
-
-    LiveContainer's pairing file is delivered by its signing profile, which also
-    knows whether that build carries SideStore. Skipping it here stops a plain
-    LiveContainer install being handed a credential it has no store to use.
-    """
-    matched = match_consumer(bundle_id)
-    if matched is None or matched.id in set(skip_ids):
-        return None
-    _maybe_ensure_remote_pairing(udid, serial, lockdown_dir)
-    try:
-        return deliver_to_app(
-            bundle_id, udid, serial, consumer=matched, lockdown_dir=lockdown_dir
-        )
-    except PairingError as exc:
-        return {
-            "id": matched.id,
-            "name": matched.name,
-            "bundle_id": bundle_id,
-            "filename": matched.filename,
-            "placed": False,
-            "error": str(exc),
-        }
-
-
-def deliver_to_device(
-    udid: str,
-    serial: str | None = None,
-    *,
-    bundle_ids: Iterable[str] | None = None,
-    lockdown_dir: Path | None = None,
-) -> dict[str, Any]:
-    """Place the pairing file in supported apps, or only those in ``bundle_ids``."""
-    _maybe_ensure_remote_pairing(udid, serial, lockdown_dir)
-    payload = payload_bytes(udid, lockdown_dir=lockdown_dir)
-    record = plistlib.loads(payload)
-    installed = apps.list_installed(serial or udid)
-    wanted = [b for b in (bundle_ids or ()) if b]
-    placed: list[dict[str, Any]] = []
-    if wanted:
-        for bundle_id in wanted:
-            installed_id = _resolve_installed_consumer(bundle_id, installed)
-            if installed_id is None:
-                matched = match_consumer(bundle_id)
-                placed.append(
-                    {
-                        "id": matched.id if matched else None,
-                        "name": matched.name if matched else bundle_id,
-                        "bundle_id": bundle_id,
-                        "filename": matched.filename if matched else None,
-                        "placed": False,
-                        "error": f"{bundle_id} is not installed on this iPhone.",
-                    }
-                )
-                continue
-            matched = match_consumer(installed_id)
-            if matched is None:
-                placed.append(
-                    {
-                        "id": None,
-                        "name": bundle_id,
-                        "bundle_id": bundle_id,
-                        "placed": False,
-                        "error": f"{bundle_id} is not a pairing-file consumer EZSide knows about.",
-                    }
-                )
-                continue
-            placed.append(
-                deliver_to_app(
-                    installed_id,
-                    udid,
-                    serial or udid,
-                    consumer=matched,
-                    payload=payload,
-                    lockdown_dir=lockdown_dir,
-                )
-            )
-    else:
-        for bundle_id in sorted(installed):
-            matched = match_consumer(bundle_id)
-            if matched is None:
-                continue
-            placed.append(
-                deliver_to_app(
-                    bundle_id,
-                    udid,
-                    serial or udid,
-                    consumer=matched,
-                    payload=payload,
-                    lockdown_dir=lockdown_dir,
-                )
-            )
-    return {
-        "udid": udid,
-        "has_lockdown": has_lockdown_keys(record),
-        "has_rppairing": has_rppairing_keys(record),
-        "note": HAS_RP_NOTE if has_rppairing_keys(record) else MISSING_RP_WARNING,
-        "bytes": len(payload),
-        "placed": placed,
-        "supported_installed": len(placed),
-    }
-
-
-def _installed_consumers(serial: str) -> tuple[list[dict[str, Any]], bool, str | None]:
-    """Supported apps on the phone, or an empty list when the phone cannot be listed."""
-    try:
-        installed = apps.list_installed(serial)
-    except Exception as exc:  # noqa: BLE001 - status must still describe the PC-side file
-        return [], False, str(exc)
-    consumers: list[dict[str, Any]] = []
-    for bundle_id in sorted(installed):
-        matched = match_consumer(bundle_id)
-        if matched is None:
-            continue
-        meta = installed[bundle_id]
-        consumers.append(
-            {
-                "id": matched.id,
-                "name": matched.name,
-                "bundle_id": bundle_id,
-                "app_name": meta.get("name") or matched.name,
-                "filename": matched.filename,
-                "needs_rppairing": matched.needs_rppairing,
-            }
-        )
-    return consumers, True, None
 
 
 def _load_lockdown(udid: str, lockdown_dir: Path) -> dict[str, Any]:
@@ -707,9 +366,11 @@ def _read_imported(udid: str) -> dict[str, Any] | None:
         return None
     try:
         parsed = plistlib.loads(secure_store.read_bytes(path))
-    except (OSError, ValueError):
-        return None
-    return parsed if isinstance(parsed, dict) else None
+    except (OSError, ValueError) as exc:
+        raise PairingError(_unreadable_imported_message(path, str(exc))) from exc
+    if not isinstance(parsed, dict):
+        raise PairingError(_unreadable_imported_message(path, "it is not a dictionary"))
+    return parsed
 
 
 def _reject_foreign_udid(record: dict[str, Any], udid: str) -> None:
@@ -724,24 +385,15 @@ def _reject_foreign_udid(record: dict[str, Any], udid: str) -> None:
         )
 
 
-def _write_into(
-    bundle_id: str,
-    serial: str | None,
-    files: dict[str, bytes],
-    directories: tuple[str, ...],
-) -> list[str]:
-    """House Arrest write, delegated so LiveContainer tests can still patch it."""
-    from . import livecontainer
-
-    return asyncio.run(
-        livecontainer._write_documents(
-            bundle_id, serial, files, directories=directories
-        )
-    )
-
-
 def _folded_udid(value: str) -> str:
     return value.replace("-", "").lower()
+
+
+def _unreadable_imported_message(path: Path, reason: str) -> str:
+    return (
+        f"The pairing file EZSide stored at {path} could not be read ({reason}). "
+        "Create the Remote Pairing keys again or import a pairing file."
+    )
 
 
 def _missing_record_message() -> str:

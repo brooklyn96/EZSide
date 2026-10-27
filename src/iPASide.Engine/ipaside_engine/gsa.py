@@ -781,15 +781,22 @@ def _save_pending(
     )
 
 
-def _load_pending() -> dict[str, Any] | None:
-    path = paths.pending_2fa_file()
+def _pending_is_live() -> bool:
+    """True when a pending 2FA file exists and is young enough; an expired one is deleted."""
     try:
-        age = time.time() - path.stat().st_mtime
+        age = time.time() - paths.pending_2fa_file().stat().st_mtime
     except OSError:
-        return None
+        return False
     if age > _PENDING_MAX_AGE:
         # An abandoned sign-in must not leave its token on disk indefinitely.
         _clear_pending()
+        return False
+    return True
+
+
+def _load_pending() -> dict[str, Any] | None:
+    path = paths.pending_2fa_file()
+    if not _pending_is_live():
         return None
     try:
         return secure_store.read_json(path)
@@ -1080,6 +1087,7 @@ def complete_2fa(email: str, password: str, code: str) -> dict[str, Any]:
 def status() -> dict[str, Any]:
     """Report the active account, and how many others are signed in."""
     _migrate_legacy_account()
+    _pending_is_live()  # sweeps an abandoned 2FA token on every start
     known = list_accounts()
     active = _active_email()
     if not active:
@@ -1097,12 +1105,12 @@ def status() -> dict[str, Any]:
     }
 
 
-def _remove_signing_material(email: str) -> None:
+def _remove_signing_material(slug: str) -> None:
     """Delete the account's signing folder so its private key does not outlive the sign-in.
 
     Nothing is revoked at Apple; the certificate simply can no longer be used from here.
     """
-    folder = paths.data_dir() / "signing" / paths.account_slug(email)
+    folder = paths.data_dir() / "signing" / slug
     try:
         shutil.rmtree(folder)
     except FileNotFoundError:
@@ -1118,16 +1126,17 @@ def logout(email: str | None = None) -> dict[str, Any]:
 
     if email is None:
         removed = [a["email"] for a in list_accounts()]
-        for address in removed:
-            _remove_signing_material(address)
-            paths.account_file(address).unlink(missing_ok=True)
+        # Walk the files, not list_accounts(): one DPAPI cannot open still holds a key.
+        for path in paths.accounts_dir().glob("*.json"):
+            _remove_signing_material(path.stem)
+            path.unlink(missing_ok=True)
         paths.active_account_file().unlink(missing_ok=True)
         return {"status": "signed_out", "removed": removed}
 
     path = paths.account_file(email)
     if not path.exists():
         raise GsaError(f"{email} is not signed in.")
-    _remove_signing_material(email)
+    _remove_signing_material(paths.account_slug(email))
     path.unlink()
     if _active_email() is None:
         paths.active_account_file().unlink(missing_ok=True)

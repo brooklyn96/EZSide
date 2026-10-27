@@ -142,3 +142,46 @@ def test_a_truncated_blob_raises_oserror(tmp_path):
 def test_a_missing_file_raises_oserror(tmp_path):
     with pytest.raises(OSError):
         secure_store.read_json(tmp_path / "nope.json")
+
+
+def test_replace_is_retried_while_another_process_holds_the_target(tmp_path, monkeypatch):
+    path = tmp_path / "secret.json"
+    secure_store.write_json(path, {"v": 1})
+    real_replace = os.replace
+    attempts: list[int] = []
+
+    def flaky(src, dst):
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise PermissionError("[WinError 5] Access is denied")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", flaky)
+    monkeypatch.setattr(secure_store.time, "sleep", lambda _s: None)
+
+    secure_store.write_json(path, {"v": 2})
+    monkeypatch.undo()
+
+    assert len(attempts) == 3
+    assert secure_store.read_json(path) == {"v": 2}
+
+
+def test_a_target_that_stays_locked_raises_after_five_tries_and_cleans_up(tmp_path, monkeypatch):
+    path = tmp_path / "secret.json"
+    secure_store.write_json(path, {"v": 1})
+    attempts: list[int] = []
+
+    def locked(src, dst):
+        attempts.append(1)
+        raise PermissionError("[WinError 5] Access is denied")
+
+    monkeypatch.setattr(os, "replace", locked)
+    monkeypatch.setattr(secure_store.time, "sleep", lambda _s: None)
+
+    with pytest.raises(PermissionError):
+        secure_store.write_json(path, {"v": 2})
+    monkeypatch.undo()
+
+    assert len(attempts) == 5
+    assert secure_store.read_json(path) == {"v": 1}
+    assert [p.name for p in tmp_path.iterdir()] == ["secret.json"]

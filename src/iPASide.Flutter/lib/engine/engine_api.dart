@@ -109,7 +109,7 @@ class EngineApi {
 
   // ---- Pairing file ------------------------------------------------------ //
 
-  /// What this PC holds for the target device, and which installed apps can use it.
+  /// What this PC holds for the target device.
   Future<PairingStatus> pairingStatus({String? udid, String? connection}) =>
       _runTyped<PairingStatus>(
         <String>['pairing', ..._targetArgs(udid, connection)],
@@ -143,22 +143,6 @@ class EngineApi {
       _runTyped<PairingCreate>(
         <String>['pairing', '--create', ..._targetArgs(udid, connection)],
         _asObject(PairingCreate.fromJson),
-      );
-
-  /// Writes the pairing file into supported apps, or only [bundleId] when set.
-  Future<PairingDelivery> deliverPairing({
-    String? udid,
-    String? connection,
-    String? bundleId,
-  }) =>
-      _runTyped<PairingDelivery>(
-        <String>[
-          'pairing',
-          '--deliver',
-          if (bundleId != null) ...<String>['--app', bundleId],
-          ..._targetArgs(udid, connection),
-        ],
-        _asObject(PairingDelivery.fromJson),
       );
 
   // ---- Developer account ------------------------------------------------- //

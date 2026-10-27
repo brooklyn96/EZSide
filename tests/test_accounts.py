@@ -368,6 +368,23 @@ def test_an_unreadable_pending_file_counts_as_none():
     assert not paths.pending_2fa_file().exists()
 
 
+def test_status_sweeps_an_abandoned_pending_sign_in():
+    gsa._save_pending(ONE, "adsid", "idms", "trusteddevice")
+    _age(paths.pending_2fa_file(), 16 * 60)
+
+    gsa.status()
+
+    assert not paths.pending_2fa_file().exists()
+
+
+def test_status_keeps_a_pending_sign_in_that_is_still_young():
+    gsa._save_pending(ONE, "adsid", "idms", "trusteddevice")
+
+    gsa.status()
+
+    assert paths.pending_2fa_file().exists()
+
+
 # --- signing out removes the key -------------------------------------------- #
 
 def _signing_folder(email):
@@ -396,6 +413,19 @@ def test_signing_out_everyone_deletes_every_signing_folder():
     gsa.logout()
 
     assert not one.exists() and not two.exists()
+
+
+def test_signing_out_everyone_also_removes_an_account_dpapi_cannot_open():
+    sign_in(ONE)
+    sign_in(TWO)
+    one, two = _signing_folder(ONE), _signing_folder(TWO)
+    paths.account_file(TWO).write_bytes(b"EZS1" + b"garbage that is not a blob")
+
+    result = gsa.logout()
+
+    assert result["removed"] == [ONE], "only the readable account has an address to report"
+    assert not list(paths.accounts_dir().glob("*.json"))
+    assert not one.exists() and not two.exists(), "the private key must not stay behind"
 
 
 def test_signing_out_without_a_signing_folder_still_works():

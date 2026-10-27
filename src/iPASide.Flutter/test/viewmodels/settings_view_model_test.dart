@@ -993,8 +993,6 @@ void main() {
       String source = 'lockdown',
       bool hasLockdown = true,
       bool hasRppairing = false,
-      bool reachable = true,
-      List<Map<String, dynamic>> consumers = const <Map<String, dynamic>>[],
     }) =>
         <String, dynamic>{
           'udid': udid,
@@ -1002,8 +1000,6 @@ void main() {
           'has_lockdown': hasLockdown,
           'has_rppairing': hasRppairing,
           'imported': source == 'imported',
-          'device_reachable': reachable,
-          'consumers': consumers,
           'note': hasRppairing ? 'has remote pairing' : 'needs remote pairing',
         };
 
@@ -1116,21 +1112,11 @@ void main() {
       expect(model.pairingMessage, contains('Wrote'));
     });
 
-    test('place creates Remote Pairing keys then writes when they were missing',
-        () async {
+    test('create stores Remote Pairing keys and reloads status', () async {
       withPhone();
       runner.results['pairing'] = EngineResult(
         ok: true,
-        data: pairingPayload(
-          consumers: <Map<String, dynamic>>[
-            <String, dynamic>{
-              'id': 'escapeos',
-              'name': 'EscapeOS',
-              'bundle_id': 'com.ipaside.escapeos.TEAM',
-              'needs_rppairing': true,
-            },
-          ],
-        ),
+        data: pairingPayload(),
       );
       final SettingsViewModel model = await load();
       runner.queued['pairing'] = <EngineResult>[
@@ -1142,119 +1128,42 @@ void main() {
             'has_lockdown': true,
           },
         ),
-        const EngineResult(
-          ok: true,
-          data: <String, dynamic>{
-            'has_rppairing': true,
-            'supported_installed': 1,
-            'placed': <dynamic>[
-              <String, dynamic>{
-                'id': 'escapeos',
-                'name': 'EscapeOS',
-                'filename': 'pairingFile.plist',
-                'placed': true,
-              },
-            ],
-          },
-        ),
       ];
-
-      await model.placePairing();
-
-      expect(
-        runner.calls.any(
-          (List<String> call) =>
-              call.first == 'pairing' && call.contains('--create'),
-        ),
-        isTrue,
+      runner.results['pairing'] = EngineResult(
+        ok: true,
+        data: pairingPayload(source: 'imported', hasRppairing: true),
       );
-      expect(
-        runner.calls.any(
-          (List<String> call) =>
-              call.first == 'pairing' && call.contains('--deliver'),
-        ),
-        isTrue,
-      );
-      expect(model.pairingMessage, contains('EscapeOS'));
+
+      await model.createPairing();
+
+      expect(runner.ran(<String>['pairing', '--create', '--udid', udid]), isTrue);
+      expect(model.pairing?.hasRppairing, isTrue);
+      expect(model.pairingMessage, contains('created'));
       expect(model.isPairingMessageError, isFalse);
     });
 
-    test('place does not write when Remote Pairing create fails', () async {
+    test('create reports why the keys could not be made', () async {
       withPhone();
       runner.results['pairing'] = EngineResult(
         ok: true,
-        data: pairingPayload(
-          consumers: <Map<String, dynamic>>[
-            <String, dynamic>{
-              'id': 'escapeos',
-              'name': 'EscapeOS',
-              'bundle_id': 'com.ipaside.escapeos.TEAM',
-              'needs_rppairing': true,
-            },
-          ],
-        ),
-      );
-      final SettingsViewModel model = await load();
-
-      await model.placePairing();
-
-      expect(model.isPairingMessageError, isTrue);
-      expect(
-        runner.calls.where(
-          (List<String> call) =>
-              call.first == 'pairing' && call.contains('--deliver'),
-        ),
-        isEmpty,
-      );
-    });
-
-    test('place on one app forwards --app', () async {
-      withPhone();
-      runner.results['pairing'] = EngineResult(
-        ok: true,
-        data: pairingPayload(
-          hasRppairing: true,
-          consumers: <Map<String, dynamic>>[
-            <String, dynamic>{
-              'id': 'escapeos',
-              'name': 'EscapeOS',
-              'app_name': 'EscapeOS',
-              'bundle_id': 'com.ipaside.escapeos.TEAM',
-              'filename': 'pairingFile.plist',
-              'needs_rppairing': true,
-            },
-          ],
-        ),
+        data: pairingPayload(),
       );
       final SettingsViewModel model = await load();
       runner.queued['pairing'] = <EngineResult>[
         const EngineResult(
           ok: true,
           data: <String, dynamic>{
-            'has_rppairing': true,
-            'placed': <dynamic>[
-              <String, dynamic>{
-                'name': 'EscapeOS',
-                'filename': 'pairingFile.plist',
-                'placed': true,
-              },
-            ],
+            'created': false,
+            'has_rppairing': false,
+            'error': 'Unlock the iPhone',
           },
         ),
       ];
 
-      await model.placePairingOn(model.pairing!.consumers.single);
+      await model.createPairing();
 
-      expect(
-        runner.calls.any(
-          (List<String> call) =>
-              call.contains('--deliver') &&
-              call.contains('--app') &&
-              call.contains('com.ipaside.escapeos.TEAM'),
-        ),
-        isTrue,
-      );
+      expect(model.pairingMessage, 'Unlock the iPhone');
+      expect(model.isPairingMessageError, isTrue);
     });
   });
 }
-
