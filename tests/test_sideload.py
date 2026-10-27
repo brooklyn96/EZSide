@@ -163,7 +163,8 @@ def sideload_harness(tmp_path, monkeypatch):
 
     def run(install, *, source=None, **options):
         monkeypatch.setattr(sideload.apps, "install", install)
-        return sideload.run_sideload(str(source or source_ipa), "UDID", record=False, **options)
+        options.setdefault("record", False)
+        return sideload.run_sideload(str(source or source_ipa), "UDID", **options)
 
     return run, signer, signed_dir
 
@@ -415,47 +416,50 @@ def test_clean_on_a_folder_that_does_not_exist_reports_nothing_removed(tmp_path)
     assert result["bytes_freed"] == 0
 
 
-def test_sideload_places_a_pairing_file_into_escapeos(sideload_harness, monkeypatch):
+def test_a_sideload_never_hands_out_the_pairing_file_on_its_own(sideload_harness, monkeypatch):
+    # A bundle id is whatever the IPA says it is, so "this looks like SideStore" is no
+    # reason to give an app this PC's pairing credential.
     run, _signer, _signed_dir = sideload_harness
     monkeypatch.setattr(
         sideload.ipa_module,
         "inspect",
-        lambda _p: {"bundle_id": "com.ipaside.escapeos", "display_name": "EscapeOS"},
+        lambda _p: {"bundle_id": "com.SideStore.SideStore", "display_name": "SideStore"},
     )
-    seen: dict = {}
-
-    def fake_deliver(bundle_id, udid, serial, *, skip_ids=()):
-        seen.update(bundle_id=bundle_id, udid=udid, skip_ids=set(skip_ids))
-        return {"placed": True, "id": "escapeos", "bundle_id": bundle_id}
-
-    monkeypatch.setattr(
-        "ipaside_engine.pairing.deliver_if_consumer", fake_deliver
-    )
-
-    result = run(lambda *_a, **_k: None)
+    result = run(_install_ok)
 
     assert result["status"] == "installed"
-    assert result["post_install"]["pairing"]["placed"] is True
-    assert seen["bundle_id"].startswith("com.ipaside.escapeos")
-    assert "livecontainer" in seen["skip_ids"]
+    assert result["post_install"] is None
 
 
-def test_sideload_does_not_fail_when_pairing_placement_cannot_run(
-    sideload_harness, monkeypatch
+def test_a_recorded_sideload_keeps_its_own_copy_and_certificate_serial(
+    sideload_harness, monkeypatch, isolated_data
 ):
     run, _signer, _signed_dir = sideload_harness
     monkeypatch.setattr(
-        sideload.ipa_module,
-        "inspect",
-        lambda _p: {"bundle_id": "com.ipaside.escapeos", "display_name": "EscapeOS"},
-    )
-    monkeypatch.setattr(
-        "ipaside_engine.pairing.deliver_if_consumer",
-        lambda *_a, **_k: {"placed": False, "error": "no pairing record"},
+        sideload.provision, "ensure_signing_assets",
+        lambda *_a, **_k: {
+            "p12_path": "id.p12", "p12_password": "pw", "profile_path": "p.mobileprovision",
+            "team_id": "TEAM", "certificate_serial": "SERIAL1",
+        },
     )
 
-    result = run(lambda *_a, **_k: None)
+    result = run(_install_ok, record=True)
 
-    assert result["status"] == "installed"
-    assert result["post_install"]["pairing"]["placed"] is False
+    cached = isolated_data / "EZSide" / "apps" / "com.example.app.TEAM" / "source.ipa"
+    assert result["cached_ipa"] == str(cached)
+    assert cached.read_bytes() == b"PK", "a byte-for-byte copy of the source"
+    stored = sideload.refresh.get("com.example.app.TEAM")
+    assert stored["cert_serial"] == "SERIAL1"
+    assert stored["cached_ipa"] == str(cached)
+    assert stored["source_ipa"].endswith("app.ipa"), "the user's file is still recorded"
 
+
+def test_forget_removes_the_cached_copy(sideload_harness, isolated_data):
+    run, _signer, _signed_dir = sideload_harness
+    run(_install_ok, record=True)
+    folder = isolated_data / "EZSide" / "apps" / "com.example.app.TEAM"
+    assert folder.is_dir()
+
+    assert sideload.refresh.forget("com.example.app.TEAM") is True
+
+    assert not folder.exists()

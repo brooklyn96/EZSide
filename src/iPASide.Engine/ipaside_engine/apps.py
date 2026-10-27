@@ -266,3 +266,61 @@ async def _uninstall_async(bundle_id: str, serial: str | None) -> None:
 def uninstall(bundle_id: str, serial: str | None = None) -> None:
     """Uninstall an app by bundle identifier."""
     return run(_uninstall_async(bundle_id, serial))
+
+
+class ProfileInstallError(EngineError):
+    """The device did not take a provisioning profile."""
+
+
+def _profile_key(plist: dict[str, Any]) -> tuple[str | None, str | None]:
+    """``(team id, application-identifier)`` of a profile's plist."""
+    teams = plist.get("TeamIdentifier") or []
+    entitlements = plist.get("Entitlements") or {}
+    return (teams[0] if teams else None), entitlements.get("application-identifier")
+
+
+async def _install_profile_async(profile: bytes, serial: str | None) -> str:
+    import io
+
+    from pymobiledevice3.services.misagent import MisagentService, ProvisioningProfile
+
+    try:
+        new = ProvisioningProfile(profile).plist
+    except Exception as exc:  # noqa: BLE001 - not a profile at all
+        raise ProfileInstallError(f"Not a readable provisioning profile: {exc}") from exc
+    uuid = new.get("UUID")
+    team, app_identifier = _profile_key(new)
+    if not uuid or not team or not app_identifier:
+        raise ProfileInstallError("The provisioning profile has no UUID, team or app identifier.")
+
+    client = await lockdown.create(serial)
+    try:
+        misagent = MisagentService(lockdown=client)
+        try:
+            # AltServer's rule: remove older versions of the profile about to be
+            # installed - same team, same app - so they do not pile up. Another team's
+            # profiles, and this team's for other apps, are never touched.
+            for installed in await misagent.copy_all():
+                old = installed.plist
+                if old.get("UUID") != uuid and _profile_key(old) == (team, app_identifier):
+                    await misagent.remove(old["UUID"])
+            await misagent.install(io.BytesIO(profile))
+            present = {p.plist.get("UUID") for p in await misagent.copy_all()}
+        finally:
+            await maybe_await(misagent.close())
+    finally:
+        await lockdown.close(client)
+    if uuid not in present:
+        raise ProfileInstallError(
+            f"The device accepted provisioning profile {uuid} but does not list it."
+        )
+    return uuid
+
+
+def install_profile(profile: bytes, serial: str | None = None) -> str:
+    """Install a provisioning profile on the device and return its UUID.
+
+    Replaces older profiles for the same app on the same team, then checks the new one
+    is listed. Raises when the device refuses it or does not list it afterwards.
+    """
+    return run(_install_profile_async(profile, serial))

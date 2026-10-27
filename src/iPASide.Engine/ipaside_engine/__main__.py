@@ -567,34 +567,75 @@ def _cmd_installs(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_refresh(args: argparse.Namespace) -> int:
-    if args.bundle_id:
-        targets = [r for r in refresh.records() if r["bundle_id"] == args.bundle_id]
-        if not targets:
-            msg = f"'{args.bundle_id}' is not a recorded sideload."
-            _emit(args, {"status": "error", "error": msg}) if args.json else print(msg)
-            return 1
-    elif args.all:
-        targets = refresh.records()
-    else:
-        targets = refresh.due(args.within)
+#: `refresh` ran, and at least one app in it failed. The JSON summary is still complete.
+EXIT_PARTIAL_FAILURE = 2
 
-    results: list[dict[str, Any]] = []
-    for entry in targets:
-        try:
-            res = sideload.refresh_record(
-                entry,
-                on_progress=_progress_to_stderr(entry["bundle_id"]),
-                keep_signed=args.keep_signed,
-                signed_dir=args.signed_dir,
-            )
-            results.append({
-                "bundle_id": entry["bundle_id"],
-                "status": "installed",
-                "expires_at": res.get("expires_at"),
-            })
-        except Exception as exc:  # keep going; report per-app outcome
-            results.append({"bundle_id": entry["bundle_id"], "status": "error", "error": str(exc)})
+
+def _stale_team_records(
+    team_id: str | None, serial: str, changed: bool, done: set[str]
+) -> list[dict[str, Any]]:
+    """Records of ``team_id`` that ``serial`` did not sign, so they must be re-signed now.
+
+    A record that names another serial was signed by a certificate that is gone. One
+    without a serial (an older record) is included only when the certificate changed in
+    this run, because then whatever signed it has just been revoked.
+    """
+    if not team_id:
+        return []
+    return [
+        r for r in refresh.records()
+        if r.get("team_id") == team_id and r["bundle_id"] not in done
+        and r.get("cert_serial") != serial and (changed or r.get("cert_serial"))
+    ]
+
+
+def _cmd_refresh(args: argparse.Namespace) -> int:
+    with refresh.operation_lock():
+        if args.bundle_id:
+            targets = [r for r in refresh.records() if r["bundle_id"] == args.bundle_id]
+            if not targets:
+                msg = f"'{args.bundle_id}' is not a recorded sideload."
+                _emit(args, {"status": "error", "error": msg}) if args.json else print(msg)
+                return 1
+        elif args.all:
+            targets = refresh.records()
+        else:
+            targets = refresh.due(args.within)
+
+        # A new certificate revokes the old one, and with it every app it signed, due or
+        # not. So when one refresh reveals the team's current certificate, every record
+        # of that team signed by another one joins this run.
+        results: list[dict[str, Any]] = []
+        done: set[str] = set()
+        queue = list(targets)
+        while queue:
+            entry = queue.pop(0)
+            if entry["bundle_id"] in done:
+                continue
+            done.add(entry["bundle_id"])
+            try:
+                res = sideload.refresh_record(
+                    entry,
+                    on_progress=_progress_to_stderr(entry["bundle_id"]),
+                    keep_signed=args.keep_signed,
+                    signed_dir=args.signed_dir,
+                    resign=args.resign,
+                )
+                results.append({
+                    "bundle_id": entry["bundle_id"],
+                    "status": "installed",
+                    "expires_at": res.get("expires_at"),
+                    "refresh_mode": res.get("refresh_mode"),
+                })
+            except Exception as exc:  # keep going; report per-app outcome
+                results.append(
+                    {"bundle_id": entry["bundle_id"], "status": "error", "error": str(exc)}
+                )
+                continue
+            serial = res.get("cert_serial")
+            if serial:
+                changed = bool(entry.get("cert_serial")) and entry["cert_serial"] != serial
+                queue.extend(_stale_team_records(entry.get("team_id"), serial, changed, done))
 
     summary = {"status": "done", "count": len(results), "refreshed": results}
     if args.json:
@@ -604,8 +645,10 @@ def _cmd_refresh(args: argparse.Namespace) -> int:
             print("Nothing to refresh.")
         for res in results:
             suffix = f" ({res['error']})" if res.get("error") else ""
-            print(f"{res['bundle_id']}: {res['status']}{suffix}")
-    return 0
+            mode = f" [{res['refresh_mode']}]" if res.get("refresh_mode") else ""
+            print(f"{res['bundle_id']}: {res['status']}{mode}{suffix}")
+    failed = any(res["status"] == "error" for res in results)
+    return EXIT_PARTIAL_FAILURE if failed else 0
 
 
 def _mb(count: int) -> str:
@@ -981,7 +1024,9 @@ def _run_request(request: dict[str, Any], write_frame: Any) -> None:
             raise ValueError("nested serve is not allowed")
         sys.stdout = out_buffer
         sys.stderr = _ProgressWriter(write_frame, request_id)
-        ok = (dispatch(namespace) or 0) == 0
+        # A partial refresh failure still produced a complete result; the app reads the
+        # per-app statuses in it, so it is not a failed request.
+        ok = (dispatch(namespace) or 0) in (0, EXIT_PARTIAL_FAILURE)
         text = out_buffer.getvalue().strip()
         if text:
             try:
@@ -1422,6 +1467,10 @@ def build_parser() -> argparse.ArgumentParser:
     refresh_parser.add_argument(
         "--within", type=float, default=2.0,
         help="with neither --all nor --bundle-id, refresh apps expiring within N days",
+    )
+    refresh_parser.add_argument(
+        "--resign", action="store_true",
+        help="always re-sign and reinstall, never just install a new profile",
     )
 
     signed_parser = sub.add_parser(

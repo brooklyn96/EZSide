@@ -175,25 +175,7 @@ def _signing_profile(
     raise SideloadError(f"Unknown signing profile '{name}'.")
 
 
-def _profile_pre_sign(
-    name: str, ipa_path: str, bundle: dict[str, Any], scratch: str
-) -> str | None:
-    """Let a named profile rewrite the bundle before it is signed.
-
-    Returns a new IPA path to sign instead of ``ipa_path``, or None to sign it as-is. Runs
-    after provisioning, so the certificate is available, and before signing, so anything
-    added is covered by the signature. The LiveContainer profile uses this to bake
-    iPASide's certificate into a bundled SideStore; a build without SideStore is left
-    untouched and signs as normal.
-    """
-    from . import livecontainer
-
-    if name == livecontainer.SIGNING_PROFILE and livecontainer.has_sidestore(ipa_path):
-        return livecontainer.seed_sidestore_certificate(ipa_path, bundle, scratch)
-    return None
-
-
-def _profile_post_install(name: str, udid: str, ipa_path: str) -> dict[str, Any] | None:
+def _profile_post_install(name: str, udid: str) -> dict[str, Any] | None:
     """Whatever a named signing profile still has to do once the app is on the device.
 
     Runs after a refresh as much as after a first install, which is the whole point.
@@ -202,13 +184,12 @@ def _profile_post_install(name: str, udid: str, ipa_path: str) -> dict[str, Any]
     would otherwise leave LiveContainer holding one that no longer matches, and nothing
     would say so: it installs, launches, and only fails when it tries to sign.
 
-    What else is needed is read from ``ipa_path``, the app actually being signed, rather
-    than from the profile name. Only some LiveContainer builds carry SideStore and so need
-    a pairing file, and the artifact is the truth about that: a name recorded by an older
-    build would say nothing, and a refresh would silently stop delivering it.
-
     Never raises. The app is already installed by this point, so a failure here is worth
     reporting, not worth undoing a successful install over.
+
+    No pairing file is placed here or after any sideload: an app's bundle id says
+    nothing trustworthy about what it is, so this PC's pairing credential is never handed
+    to an app automatically.
     """
     from . import livecontainer
 
@@ -216,35 +197,7 @@ def _profile_post_install(name: str, udid: str, ipa_path: str) -> dict[str, Any]
         return None
 
     bundle = provision.load_bundle()
-    outcome: dict[str, Any] = {
-        "certificate": livecontainer.seed_certificate(bundle, udid)
-    }
-
-    # A pairing file is a credential for this PC's pairing with the phone, so it goes only
-    # to a build that has a store able to use it.
-    if livecontainer.has_sidestore(ipa_path):
-        outcome["pairing"] = livecontainer.deliver_pairing(
-            bundle["bundle_id"], udid, udid
-        )
-    return outcome
-
-
-def _deliver_pairing_if_needed(bundle_id: str, udid: str) -> dict[str, Any] | None:
-    """Place this PC's pairing file after a sideload that landed a consumer.
-
-    Never raises. The app is already installed; a missing pairing record or a
-    House Arrest failure is reported beside the install, not as an undone one.
-    LiveContainer is left to :func:`_profile_post_install`, which also knows
-    whether that build carries SideStore.
-    """
-    from . import pairing as pairing_mod
-
-    return pairing_mod.deliver_if_consumer(
-        bundle_id,
-        udid,
-        udid,
-        skip_ids=frozenset({"livecontainer"}),
-    )
+    return {"certificate": livecontainer.seed_certificate(bundle, udid)}
 
 
 def _as_signed_dir(directory: str | None) -> Path:
@@ -317,10 +270,12 @@ def _open_signed_dir(directory: str | None, deepest: int = 0) -> tuple[Path, Pat
     return target, scratch
 
 
+@refresh.operation_lock()
 def run_sideload(
     ipa_path: str,
     udid: str | None = None,
     *,
+    source_ipa: str | None = None,
     bundle_id: str | None = None,
     display_name: str | None = None,
     bundle_version: str | None = None,
@@ -346,6 +301,13 @@ def run_sideload(
     ``profile`` names a signing profile that contributes app groups and an explicit
     entitlements plist - see :func:`_signing_profile`. Ordinary sideloads leave it unset
     and get exactly what their provisioning profile grants.
+
+    A recorded install also keeps EZSide's own copy of the IPA (``cached_ipa``) and the
+    certificate serial it was signed with (``cert_serial``), which is what lets a refresh
+    work after the user's file is gone, and swap only the profile when it can.
+    ``source_ipa`` is the path to record as the user's file when ``ipa_path`` is that
+    copy (a refresh); it defaults to ``ipa_path``. Runs under
+    :func:`refresh.operation_lock`.
     """
     progress: ProgressFn = on_progress or (lambda *_args: None)
     udid = resolve_udid(udid)
@@ -411,18 +373,8 @@ def run_sideload(
             written.write_bytes(plistlib.dumps(entitlements))
             entitlements_path = str(written)
 
-        # A profile may rewrite the bundle before it is signed - baking a certificate
-        # into a store it carries, say. Whatever it hands back is what gets signed, so
-        # the added files are covered by the code signature; the seeded copy lives in
-        # scratch and goes with it.
-        sign_source = ipa_path
-        if profile:
-            seeded = _profile_pre_sign(profile, ipa_path, bundle, str(scratch))
-            if seeded:
-                sign_source = seeded
-
         signing.sign_ipa(
-            sign_source, output,
+            ipa_path, output,
             p12_path=bundle["p12_path"],
             p12_password=bundle["p12_password"],
             profile_path=bundle["profile_path"],
@@ -458,20 +410,13 @@ def run_sideload(
         post_install: dict[str, Any] | None = None
         if profile:
             progress("finalize", None, "Finishing setup\u2026")
-            post_install = _profile_post_install(profile, udid, ipa_path)
-
-        # EscapeOS, StikDebug, SideStore, AltStore. LiveContainer is skipped: its
-        # signing profile already delivers a pairing file, and only when the IPA
-        # actually carries SideStore.
-        pairing_placed = _deliver_pairing_if_needed(target_bundle_id, udid)
-        if pairing_placed is not None:
-            post_install = {**(post_install or {}), "pairing": pairing_placed}
+            post_install = _profile_post_install(profile, udid)
     finally:
         # Scratch always goes, kept signed IPA or not: it is an unpacked copy of the
         # whole app, worth hundreds of MB, and nothing reads it after signing.
         shutil.rmtree(scratch, ignore_errors=True)
         # Unless the user asked to keep it, so does the signed IPA - install reads it
-        # once, refresh re-signs from the recorded *source* IPA, and a retry re-signs
+        # once, refresh re-signs from the cached or recorded source IPA, and a retry re-signs
         # anyway, so it is never read again. Leaving it behind used to strand a copy
         # of the largest app ever sideloaded on disk permanently (233 MB here), and
         # this runs on failure too so an aborted upload cannot leak one either.
@@ -492,15 +437,18 @@ def run_sideload(
         "icon": info.get("icon"),
         "udid": udid,
         "team_id": bundle.get("team_id"),
-        "source_ipa": str(Path(ipa_path).resolve()),
+        "source_ipa": str(Path(source_ipa or ipa_path).resolve()),
         "signed_ipa": output if keep_signed else None,
         "installed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "expires_at": expires_at,
+        "cert_serial": bundle.get("certificate_serial"),
+        "cached_ipa": None,
         "post_install": post_install,
     }
     if record:
+        result["cached_ipa"] = refresh.cache_ipa(target_bundle_id, ipa_path)
         # Everything but signed_ipa: `signed --clean` can remove that file at any
-        # time, and refresh re-signs from source_ipa, so recording it would only
+        # time, and refresh re-signs from cached_ipa / source_ipa, so recording it would only
         # put a path in the registry that quietly stops being true. post_install is
         # likewise the outcome of this one run, not something to replay.
         _transient = ("signed_ipa", "post_install")
@@ -716,37 +664,104 @@ def _refresh_account(entry: dict[str, Any]) -> str | None:
     )
 
 
+def _refresh_source(entry: dict[str, Any]) -> str:
+    """The IPA a refresh re-signs: EZSide's own copy, else the user's original file."""
+    for key in ("cached_ipa", "source_ipa"):
+        path = entry.get(key)
+        if path and Path(path).exists():
+            return path
+    source = entry.get("source_ipa") or entry.get("cached_ipa")
+    if not source:
+        raise SideloadError(
+            f"{entry.get('name') or 'This app'} has no recorded source IPA, so it "
+            "cannot be refreshed. Sideload it again to start tracking it."
+        )
+    # Checked before resolve_udid so a refresh-all does not spend a lockdown round
+    # trip per app to discover a file is gone; ipa.inspect would catch it either way.
+    raise ipa_module.missing_ipa_error(source)
+
+
+def _refresh_profile_only(
+    entry: dict[str, Any], progress: ProgressFn
+) -> dict[str, Any] | None:
+    """Install a fresh profile for an app that stays on the device, AltStore-style.
+
+    Only when the app is still installed and the certificate it was signed with is still
+    the current one; the app itself is not touched. Returns None whenever that does not
+    hold or any step fails, and the caller re-signs instead.
+    """
+    bundle_id, udid = entry.get("bundle_id"), entry.get("udid")
+    options = entry.get("options") or {}
+    try:
+        if bundle_id not in apps.list_installed(udid):
+            return None
+        app_groups: list[str] = []
+        if options.get("profile"):
+            app_groups = _signing_profile(
+                options["profile"], developer.list_teams()[0]["teamId"], bundle_id
+            )[0]
+        bundle = provision.ensure_signing_assets(
+            bundle_id, udid, app_name=entry.get("name") or bundle_id,
+            on_step=lambda message: progress("provision", None, message),
+            app_groups=app_groups,
+        )
+        if bundle.get("certificate_serial") != entry.get("cert_serial"):
+            return None
+        profile = Path(bundle["profile_path"]).read_bytes()
+        progress("install", None, "Installing the new provisioning profile…")
+        apps.install_profile(profile, udid)
+    except Exception:  # noqa: BLE001 - any failure here means "re-sign instead"
+        return None
+
+    expiry = refresh.profile_expiration(profile)
+    expires_at = expiry.isoformat() if expiry else None
+    stored = {k: v for k, v in entry.items() if k not in ("days_left", "expired")}
+    refresh.record({**stored, "expires_at": expires_at})
+    return {
+        "status": "installed",
+        "bundle_id": bundle_id,
+        "expires_at": expires_at,
+        "cert_serial": bundle.get("certificate_serial"),
+        "refresh_mode": "profile",
+    }
+
+
+@refresh.operation_lock()
 def refresh_record(
     entry: dict[str, Any],
     on_progress: ProgressFn | None = None,
     *,
     keep_signed: bool = False,
     signed_dir: str | None = None,
+    resign: bool = False,
 ) -> dict[str, Any]:
-    """Re-sign + reinstall a previously recorded sideload using its saved options.
+    """Refresh a previously recorded sideload; the result's ``refresh_mode`` says how.
+
+    ``"profile"``: the app is still installed and still signed with the current
+    certificate, so only a new provisioning profile is installed. ``"resign"``: anything
+    else - a new certificate, the app gone, an older record without ``cert_serial`` /
+    ``cached_ipa``, the profile step failing, or ``resign=True`` - re-signs and
+    reinstalls from EZSide's copy of the IPA (or the user's file if the copy is gone).
 
     ``keep_signed``/``signed_dir`` are not part of the record: they are the user's
     current preference, which the caller (the ``refresh`` command, including the
     headless auto-refresh run) passes in so a refresh honours whatever the setting
     says today rather than what it said when the app was first sideloaded.
     """
-    source = entry.get("source_ipa")
-    if not source:
-        raise SideloadError(
-            f"{entry.get('name') or 'This app'} has no recorded source IPA, so it "
-            "cannot be refreshed. Sideload it again to start tracking it."
-        )
-    if not Path(source).exists():
-        # Checked before resolve_udid so a refresh-all does not spend a lockdown round
-        # trip per app to discover a file is gone; ipa.inspect would catch it either way.
-        raise ipa_module.missing_ipa_error(source)
+    source = _refresh_source(entry)
     options = entry.get("options") or {}
+    progress: ProgressFn = on_progress or (lambda *_args: None)
 
     account = _refresh_account(entry)
     with gsa.acting_as(account):
-        return run_sideload(
+        if not resign and entry.get("cert_serial") and entry.get("cached_ipa"):
+            done = _refresh_profile_only(entry, progress)
+            if done is not None:
+                return done
+        result = run_sideload(
             source,
             entry.get("udid"),
+            source_ipa=entry.get("source_ipa") or source,
             bundle_id=entry.get("bundle_id"),
             display_name=options.get("display_name"),
             bundle_version=options.get("bundle_version"),
@@ -761,6 +776,7 @@ def refresh_record(
             profile=options.get("profile"),
             on_progress=on_progress,
         )
+    return {**result, "refresh_mode": "resign"}
 
 
 def _kept_signed_ipas(directory: Path) -> list[tuple[Path, os.stat_result]]:

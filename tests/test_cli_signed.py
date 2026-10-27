@@ -36,6 +36,13 @@ def test_refresh_takes_the_same_two_options():
     default = _parse(["refresh"])
     assert default.keep_signed is False
     assert default.signed_dir is None
+    assert default.resign is False
+    assert _parse(["refresh", "--resign"]).resign is True
+
+
+def test_the_jailbreak_command_is_gone():
+    with pytest.raises(SystemExit):
+        _parse(["jailbreak"])
 
 
 def test_sideload_command_forwards_both_options(monkeypatch):

@@ -16,7 +16,7 @@ import json
 
 import pytest
 
-from ipaside_engine import developer, gsa, paths, provision, signing
+from ipaside_engine import developer, gsa, paths, provision, secure_store, signing
 
 TEAM = "ASK9QR9SBC"
 
@@ -162,6 +162,8 @@ def test_a_cached_certificate_that_apple_still_lists_is_reused(portal, tmp_path)
     assert serial == OURS["serialNumber"]
     assert fake.revoked == []
     assert fake.machine_names == []
+    raw = (tmp_path / "certificate.json").read_bytes()
+    assert raw.startswith(secure_store.MAGIC), "a plaintext cache is rewritten protected"
 
 
 # --------------------------------------------------------------------------- #
@@ -201,3 +203,62 @@ def test_a_failed_revocation_alone_does_not_stop_a_working_request(portal):
 
     assert serial == "NEWLYISSUED0001"
     assert fake.machine_names == [provision.CERTIFICATE_MACHINE_NAME]
+
+
+# --------------------------------------------------------------------------- #
+# Secrets at rest
+# --------------------------------------------------------------------------- #
+def test_a_new_certificate_is_cached_protected(portal, tmp_path):
+    portal([])
+
+    provision._ensure_certificate(TEAM, None)
+
+    path = tmp_path / "certificate.json"
+    assert path.read_bytes().startswith(secure_store.MAGIC)
+    assert secure_store.read_json(path)["serial"] == "NEWLYISSUED0001"
+
+
+@pytest.fixture
+def provisioning(monkeypatch, tmp_path):
+    """ensure_signing_assets with Apple stubbed; returns the passwords build_p12 saw."""
+    seen: list[str] = []
+    monkeypatch.setattr(paths, "signing_dir", lambda _slug=None: tmp_path)
+    monkeypatch.setattr(gsa, "load_session", lambda *a, **k: {"email": None})
+    monkeypatch.setattr(developer, "list_teams", lambda: [{"teamId": TEAM, "name": "T"}])
+    monkeypatch.setattr(provision, "_ensure_certificate", lambda *_a: (b"key", b"der", "S1"))
+    monkeypatch.setattr(provision, "_ensure_device", lambda *_a: None)
+    monkeypatch.setattr(provision, "_ensure_app_id", lambda *_a: {"appIdId": "APPID"})
+    monkeypatch.setattr(
+        developer, "download_profile", lambda *_a: {"encodedProfile": b"profile"}
+    )
+    monkeypatch.setattr(
+        signing, "build_p12", lambda _der, _key, password: seen.append(password) or b"p12"
+    )
+    return seen
+
+
+def test_each_identity_gets_a_random_password_kept_only_in_the_protected_bundle(
+    provisioning, tmp_path
+):
+    first = provision.ensure_signing_assets("com.a", "UDID")
+    second = provision.ensure_signing_assets("com.a", "UDID")
+
+    assert provisioning == [first["p12_password"], second["p12_password"]]
+    assert first["p12_password"] != second["p12_password"]
+    assert len(first["p12_password"]) >= 32
+    assert first["p12_password"] != signing.P12_PASSWORD, "not the public constant"
+    raw = (tmp_path / "bundle.json").read_bytes()
+    assert raw.startswith(secure_store.MAGIC)
+    assert secure_store.read_json(tmp_path / "bundle.json") == second
+    assert provision.load_bundle() == second
+
+
+def test_a_legacy_plaintext_bundle_is_read_and_rewritten_protected(monkeypatch, tmp_path):
+    monkeypatch.setattr(paths, "signing_dir", lambda _slug=None: tmp_path)
+    monkeypatch.setattr(gsa, "load_session", lambda *a, **k: {"email": None})
+    legacy = {"team_id": TEAM, "p12_password": "iPASide"}
+    (tmp_path / "bundle.json").write_text(json.dumps(legacy), encoding="utf-8")
+
+    assert provision.load_bundle() == legacy
+    assert (tmp_path / "bundle.json").read_bytes().startswith(secure_store.MAGIC)
+    assert provision.load_bundle() == legacy

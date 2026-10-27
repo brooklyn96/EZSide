@@ -16,13 +16,14 @@ profiles last 7 days), so repeat signs don't burn Apple's rate limits.
 from __future__ import annotations
 
 import base64
-import json
+import secrets
+from pathlib import Path
 from typing import Any, Callable
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
-from . import developer, gsa, paths, signing
+from . import developer, gsa, paths, secure_store, signing
 
 _CERT_CACHE = "certificate.json"
 _BUNDLE_CACHE = "bundle.json"
@@ -44,6 +45,14 @@ def _account_slug(email: str | None) -> str | None:
     return paths.account_slug(email) if email else None
 
 
+def _read_secret(path: Path) -> dict[str, Any]:
+    """Read certificate.json / bundle.json, rewriting a legacy plaintext one protected."""
+    data = secure_store.read_json(path)
+    if not path.read_bytes().startswith(secure_store.MAGIC):
+        secure_store.write_json(path, data)
+    return data
+
+
 def load_bundle() -> dict[str, Any]:
     """Return the cached signing bundle from a prior `provision`, or raise.
 
@@ -55,45 +64,7 @@ def load_bundle() -> dict[str, Any]:
     path = paths.signing_dir(_account_slug(session.get("email"))) / _BUNDLE_CACHE
     if not path.exists():
         raise gsa.GsaError("no signing bundle; run 'provision' first")
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def signing_identity() -> tuple[bytes, bytes, str]:
-    """Return ``(private_key_pem, certificate_der, serial)`` for the active account.
-
-    The raw material iPASide signs with, for baking into *another* signer's bundle - see
-    :func:`ipaside_engine.livecontainer.seed_sidestore_certificate`. Read from the same
-    per-account cache the signing bundle uses, so it is the identity that just signed,
-    not a re-issue.
-    """
-    session = gsa.load_session()
-    cache = paths.signing_dir(_account_slug(session.get("email"))) / _CERT_CACHE
-    if not cache.exists():
-        raise gsa.GsaError("no signing certificate cached; run 'provision' first")
-    cached = json.loads(cache.read_text(encoding="utf-8"))
-    return (
-        base64.b64decode(cached["key_pem"]),
-        base64.b64decode(cached["cert_der"]),
-        cached["serial"],
-    )
-
-
-def certificate_machine_id(team_id: str, serial: str) -> str:
-    """The ``machineId`` Apple recorded for a certificate.
-
-    AltStore and SideStore encrypt an imported ``.p12`` with this value as its password -
-    it is the identifier submitted with the CSR, and Apple returns it in the certificate
-    listing. Recovered from there rather than kept locally, so it works for a certificate
-    issued by any earlier build too.
-    """
-    for cert in developer.list_certificates(team_id):
-        if cert.get("serialNumber") == serial:
-            machine_id = cert.get("machineId")
-            if machine_id:
-                return str(machine_id)
-    raise gsa.GsaError(
-        f"could not read the machine id for certificate {serial} from Apple"
-    )
+    return _read_secret(path)
 
 
 def team_scoped_bundle_id(base_bundle_id: str) -> str:
@@ -161,7 +132,7 @@ def _ensure_certificate(team_id: str, account_slug: str | None) -> tuple[bytes, 
     cache_path = paths.signing_dir(account_slug) / _CERT_CACHE
     server_certs = developer.list_certificates(team_id)
     if cache_path.exists():
-        cached = json.loads(cache_path.read_text(encoding="utf-8"))
+        cached = _read_secret(cache_path)
         serial = cached.get("serial")
         if any(c.get("serialNumber") == serial for c in server_certs):
             return (
@@ -206,15 +177,13 @@ def _ensure_certificate(team_id: str, account_slug: str | None) -> tuple[bytes, 
     if cert_der is None:
         raise gsa.GsaError("could not obtain certificate content from Apple")
 
-    cache_path.write_text(
-        json.dumps(
-            {
-                "serial": serial,
-                "key_pem": base64.b64encode(key_pem).decode(),
-                "cert_der": base64.b64encode(cert_der).decode(),
-            }
-        ),
-        encoding="utf-8",
+    secure_store.write_json(
+        cache_path,
+        {
+            "serial": serial,
+            "key_pem": base64.b64encode(key_pem).decode(),
+            "cert_der": base64.b64encode(cert_der).decode(),
+        },
     )
     return key_pem, cert_der, serial
 
@@ -325,7 +294,10 @@ def ensure_signing_assets(
     signing_dir = paths.signing_dir(_account_slug(account))
     p12_path = signing_dir / _IDENTITY_P12
     profile_path = signing_dir / _PROFILE
-    p12_path.write_bytes(signing.build_p12(cert_der, key_pem))
+    # A fresh random password for every identity file written, kept only in the
+    # protected bundle.json; the .p12 itself stays a plain PKCS#12 because zsign reads it.
+    p12_password = secrets.token_urlsafe(24)
+    p12_path.write_bytes(signing.build_p12(cert_der, key_pem, p12_password))
     profile_path.write_bytes(bytes(profile_data))
 
     bundle = {
@@ -337,10 +309,10 @@ def ensure_signing_assets(
         "certificate_serial": serial,
         "udid": udid,
         "p12_path": str(p12_path),
-        "p12_password": signing.P12_PASSWORD,
+        "p12_password": p12_password,
         "profile_path": str(profile_path),
         "app_groups": app_groups or [],
         "app_group_ids": group_ids,
     }
-    (signing_dir / _BUNDLE_CACHE).write_text(json.dumps(bundle, indent=2), encoding="utf-8")
+    secure_store.write_json(signing_dir / _BUNDLE_CACHE, bundle)
     return bundle
