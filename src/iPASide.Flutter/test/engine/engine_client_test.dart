@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ipaside/engine/engine_client.dart';
 import 'package:ipaside/engine/engine_exception.dart';
 import 'package:ipaside/engine/engine_locator.dart';
+import 'package:ipaside/platform/app_paths.dart';
 import 'package:ipaside/platform/child_process_reaper.dart';
 
 /// Records the pids the client hands over, so lifecycle wiring is observable.
@@ -68,6 +69,32 @@ void main() {
         (decoded['args'] as List<dynamic>).last,
         'C:\\ipa\\Trüs "App"\n.ipa',
       );
+    });
+  });
+
+  group('EngineClient.engineEnvironment', () {
+    const AppPaths paths = AppPaths.rooted(r'D:\EZSide\data');
+
+    test('hands the engine the app data folder', () {
+      expect(
+        EngineClient.engineEnvironment(paths)['IPASIDE_DATA_DIR'],
+        r'D:\EZSide\data',
+      );
+    });
+
+    test('keeps the engine scratch files inside the data folder', () {
+      final Map<String, String> env = EngineClient.engineEnvironment(paths);
+
+      expect(env['TEMP'], paths.tempPath);
+      expect(env['TMP'], paths.tempPath);
+      expect(paths.tempPath, startsWith(r'D:\EZSide\data'));
+    });
+
+    test('still forces UTF-8 and unbuffered output', () {
+      final Map<String, String> env = EngineClient.engineEnvironment(paths);
+
+      expect(env['PYTHONUTF8'], '1');
+      expect(env['PYTHONUNBUFFERED'], '1');
     });
   });
 

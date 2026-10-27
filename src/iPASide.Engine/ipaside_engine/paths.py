@@ -28,12 +28,44 @@ def resource_dir() -> Path:
     return Path(__file__).parent
 
 
+DATA_DIR_ENV = "IPASIDE_DATA_DIR"
+
+
+def installed_app_dir() -> Path | None:
+    """The install folder when running from the installed layout, else None.
+
+    The installer ships the engine as ``<app>\\engine\\python\\python.exe``; the
+    interpreter (or, failing that, the package inside its site-packages) tells us
+    where ``<app>`` is, wherever the user chose to install it.
+    """
+    for folder in (Path(sys.executable).parent, *resource_dir().parents):
+        if (
+            folder.name.lower() == "python"
+            and folder.parent.name.lower() == "engine"
+            and (folder / "python.exe").is_file()
+        ):
+            return folder.parent.parent
+    return None
+
+
 def data_dir() -> Path:
-    """Per-user application data directory (created if missing)."""
-    base = os.environ.get("LOCALAPPDATA") or os.path.join(
-        os.path.expanduser("~"), ".local", "share"
-    )
-    path = Path(base) / APP_NAME
+    """Application data directory (created if missing).
+
+    In order: ``IPASIDE_DATA_DIR``; ``<install folder>\\data`` for an installed
+    copy, so the install folder holds everything EZSide writes; otherwise the
+    per-user default (``%LOCALAPPDATA%\\EZSide``). The app resolves the same order
+    and passes its answer down, so the two can never disagree.
+    """
+    override = os.environ.get(DATA_DIR_ENV, "").strip()
+    if override:
+        path = Path(override)
+    elif (app_dir := installed_app_dir()) is not None:
+        path = app_dir / "data"
+    else:
+        base = os.environ.get("LOCALAPPDATA") or os.path.join(
+            os.path.expanduser("~"), ".local", "share"
+        )
+        path = Path(base) / APP_NAME
     path.mkdir(parents=True, exist_ok=True)
     return path
 

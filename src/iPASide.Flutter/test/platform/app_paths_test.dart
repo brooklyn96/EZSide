@@ -104,8 +104,88 @@ void main() {
     });
   });
 
+  group('AppPaths.resolveRoot data folder order', () {
+    late Directory install;
+
+    setUp(() {
+      install = Directory.systemTemp.createTempSync('ipaside_install_');
+    });
+    tearDown(() => install.deleteSync(recursive: true));
+
+    String exe() => _join(<String>[install.path, 'EZSide.exe']);
+
+    void installEngine() {
+      File(
+        _join(<String>[install.path, 'engine', 'python', 'python.exe']),
+      ).createSync(recursive: true);
+    }
+
+    String resolve(Map<String, String> environment, {String? executablePath}) =>
+        AppPaths.resolveRoot(
+          environment,
+          host: AppDataHost.windows,
+          executablePath: executablePath,
+        );
+
+    const Map<String, String> userEnv = <String, String>{
+      'LOCALAPPDATA': r'C:\Users\test\AppData\Local',
+    };
+
+    test('IPASIDE_DATA_DIR wins over everything, used as given', () {
+      installEngine();
+
+      expect(
+        resolve(<String, String>{
+          ...userEnv,
+          'IPASIDE_DATA_DIR': r'D:\state\EZSide',
+        }, executablePath: exe()),
+        r'D:\state\EZSide',
+      );
+    });
+
+    test('a blank IPASIDE_DATA_DIR is ignored', () {
+      expect(
+        resolve(<String, String>{...userEnv, 'IPASIDE_DATA_DIR': '  '}),
+        _join(<String>[r'C:\Users\test\AppData\Local', 'EZSide']),
+      );
+    });
+
+    test('an installed engine next to the exe puts data in <app>/data', () {
+      installEngine();
+
+      expect(
+        resolve(userEnv, executablePath: exe()),
+        _join(<String>[install.path, 'data']),
+      );
+    });
+
+    test('no engine next to the exe falls back to LOCALAPPDATA', () {
+      expect(
+        resolve(userEnv, executablePath: exe()),
+        _join(<String>[r'C:\Users\test\AppData\Local', 'EZSide']),
+      );
+    });
+
+    test('no executable path means the installed layout is not considered', () {
+      installEngine();
+
+      expect(
+        resolve(userEnv),
+        _join(<String>[r'C:\Users\test\AppData\Local', 'EZSide']),
+      );
+    });
+  });
+
   group('AppPaths layout', () {
     const AppPaths paths = AppPaths.rooted(r'C:\data\EZSide');
+
+    test('derives the fault log and scratch paths from the root', () {
+      expect(
+        paths.engineFaultLogPath,
+        _join(<String>[r'C:\data\EZSide', 'engine-fault.log']),
+      );
+      expect(paths.tempPath, _join(<String>[r'C:\data\EZSide', 'tmp']));
+    });
 
     test('derives the auto-refresh log path from the root', () {
       expect(

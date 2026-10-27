@@ -24,20 +24,33 @@ enum AppDataHost {
   }
 }
 
-/// Well-known per-user data locations: `%LOCALAPPDATA%\EZSide` on Windows and
-/// the platform-native per-user data directory elsewhere.
+/// Environment variable that names the data folder outright. The engine honours
+/// it first too, and the app passes its own answer down through it.
+const String dataDirEnvVar = 'IPASIDE_DATA_DIR';
+
+/// Well-known data locations. Resolved in this order:
+///
+/// 1. `IPASIDE_DATA_DIR`, when set.
+/// 2. `<folder of the app exe>\data`, when the installed engine sits next to
+///    the exe (`engine\python\python.exe`), so an installed copy keeps all of
+///    its data inside the folder the user chose to install it in.
+/// 3. `%LOCALAPPDATA%\EZSide` on Windows and the platform-native per-user data
+///    directory elsewhere (development and test runs).
 ///
 /// The app reads [AppPaths.instance]; [AppPaths.rooted] exists so tests can
 /// point the same layout at a scratch directory. The Inno Setup uninstaller
-/// knows this root, so the fallbacks below deliberately rebuild the canonical
-/// location instead of inventing a new one.
+/// knows the installed root, so the fallbacks below deliberately rebuild the
+/// canonical location instead of inventing a new one.
 class AppPaths {
   /// Creates a layout rooted at [root].
   const AppPaths.rooted(this.root);
 
   /// The layout the app uses, derived once from the process environment.
   static final AppPaths instance = AppPaths.rooted(
-    resolveRoot(Platform.environment),
+    resolveRoot(
+      Platform.environment,
+      executablePath: Platform.resolvedExecutable,
+    ),
   );
 
   /// Folder holding every piece of persisted app data.
@@ -49,6 +62,12 @@ class AppPaths {
   /// Theme-only UI settings JSON.
   String get settingsPath => _join(root, 'settings.json');
 
+  /// Crash dump written when the engine dies mid-request.
+  String get engineFaultLogPath => _join(root, 'engine-fault.log');
+
+  /// Scratch space for the engine and its helpers, kept off the system drive.
+  String get tempPath => _join(root, 'tmp');
+
   /// Creates [root] and any missing parents.
   ///
   /// Throws [FileSystemException] if the directory cannot be created; callers
@@ -58,12 +77,27 @@ class AppPaths {
   /// Derives the data root from [environment] for the given [host].
   ///
   /// [host] defaults to the running OS; pass it explicitly to exercise another
-  /// family's derivation.
+  /// family's derivation. [executablePath] is the running app exe; without it
+  /// the installed layout is not considered.
   static String resolveRoot(
     Map<String, String> environment, {
     AppDataHost? host,
+    String? executablePath,
   }) {
-    final String? dataHome = switch (host ?? AppDataHost.current) {
+    final String? explicit = _nonEmpty(environment[dataDirEnvVar]);
+    if (explicit != null) return explicit.trim();
+
+    final AppDataHost family = host ?? AppDataHost.current;
+    if (executablePath != null && family == AppDataHost.windows) {
+      final String appDir = File(executablePath).parent.path;
+      final String python = _join(
+        _join(_join(appDir, 'engine'), 'python'),
+        'python.exe',
+      );
+      if (File(python).existsSync()) return _join(appDir, 'data');
+    }
+
+    final String? dataHome = switch (family) {
       AppDataHost.windows => _windowsDataHome(environment),
       AppDataHost.macOS => _macDataHome(environment),
       AppDataHost.other => _xdgDataHome(environment),

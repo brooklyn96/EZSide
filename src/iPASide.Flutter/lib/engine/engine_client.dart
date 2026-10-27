@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:io';
 
+import 'package:ipaside/platform/app_paths.dart';
 import 'package:ipaside/platform/child_process_reaper.dart';
 
 import 'async_mutex.dart';
@@ -131,12 +132,14 @@ class EngineClient with EngineCommandRunner {
     required EngineLocator locator,
     required ChildProcessReaper reaper,
     EngineLogSink? log,
+    AppPaths? paths,
   })  :
         // A named parameter cannot be private, so this cannot become an
         // initializing formal for `_reaper`.
         // ignore: prefer_initializing_formals
         _reaper = reaper,
         _log = log ?? defaultEngineLog,
+        _paths = paths ?? AppPaths.instance,
         _spec = locator.resolve();
 
   /// How long the `ready` frame may take; covers the Python import cost.
@@ -157,6 +160,7 @@ class EngineClient with EngineCommandRunner {
 
   final ChildProcessReaper _reaper;
   final EngineLogSink _log;
+  final AppPaths _paths;
   final EngineLaunchSpec _spec;
   final AsyncMutex _gate = AsyncMutex();
   final StreamController<Map<String, dynamic>> _events =
@@ -306,11 +310,33 @@ class EngineClient with EngineCommandRunner {
         if (env != null && env.isNotEmpty) 'env': env,
       });
 
+  /// Environment every engine process starts with.
+  ///
+  /// `IPASIDE_DATA_DIR` hands the engine the exact data folder the app resolved,
+  /// so the two can never disagree (GUI and headless auto-refresh alike). `TEMP`
+  /// and `TMP` move the engine's scratch files (and its helpers') there too, so
+  /// nothing lands on the system drive.
+  static Map<String, String> engineEnvironment(AppPaths paths) =>
+      <String, String>{
+        'PYTHONUTF8': '1',
+        'PYTHONUNBUFFERED': '1',
+        dataDirEnvVar: paths.root,
+        'TEMP': paths.tempPath,
+        'TMP': paths.tempPath,
+      };
+
   Future<void> _ensureStarted() async {
     if (_process != null && !_processExited) {
       return;
     }
     await _cleanup();
+
+    try {
+      // The scratch folder must exist: Python skips a temp dir it cannot write.
+      Directory(_paths.tempPath).createSync(recursive: true);
+    } catch (error) {
+      _log('could not create ${_paths.tempPath}: $error');
+    }
 
     final Process process;
     try {
@@ -321,10 +347,7 @@ class EngineClient with EngineCommandRunner {
         // override, which takes no flags. Note the child inherits our environment,
         // which is why the interpreter must isolate itself rather than trust it:
         // a `PYTHONPATH` we never set would otherwise choose the engine for us.
-        environment: <String, String>{
-          'PYTHONUTF8': '1',
-          'PYTHONUNBUFFERED': '1',
-        },
+        environment: engineEnvironment(_paths),
         workingDirectory: _spec.workingDirectory,
       );
     } on ProcessException catch (error) {
@@ -416,21 +439,8 @@ class EngineClient with EngineCommandRunner {
 
   void _writeFaultFile(String text) {
     try {
-      final String? localAppData = Platform.environment['LOCALAPPDATA'];
-      final String? home = Platform.environment['HOME'];
-      final Directory dir;
-      if (localAppData != null && localAppData.isNotEmpty) {
-        dir = Directory('$localAppData${Platform.pathSeparator}EZSide');
-      } else if (home != null && home.isNotEmpty) {
-        dir = Directory(
-          '$home${Platform.pathSeparator}.local${Platform.pathSeparator}share${Platform.pathSeparator}EZSide',
-        );
-      } else {
-        return;
-      }
-      dir.createSync(recursive: true);
-      File('${dir.path}${Platform.pathSeparator}engine-fault.log')
-          .writeAsStringSync('$text\n');
+      _paths.ensureRootExists();
+      File(_paths.engineFaultLogPath).writeAsStringSync('$text\n');
     } catch (error) {
       _log('could not write engine-fault.log: $error');
     }
@@ -456,24 +466,10 @@ class EngineClient with EngineCommandRunner {
       stderrLines: List<String>.from(_stderrTail),
     );
     _writeFaultFile(message);
-    final String saved = _faultLogPath();
-    final String shown = saved.isEmpty
-        ? message
-        : '$message\nA copy was saved to $saved';
+    final String shown =
+        '$message\nA copy was saved to ${_paths.engineFaultLogPath}';
     await _cleanup();
     return EngineException(shown);
-  }
-
-  String _faultLogPath() {
-    final String? localAppData = Platform.environment['LOCALAPPDATA'];
-    if (localAppData != null && localAppData.isNotEmpty) {
-      return '$localAppData${Platform.pathSeparator}EZSide${Platform.pathSeparator}engine-fault.log';
-    }
-    final String? home = Platform.environment['HOME'];
-    if (home != null && home.isNotEmpty) {
-      return '$home${Platform.pathSeparator}.local${Platform.pathSeparator}share${Platform.pathSeparator}EZSide${Platform.pathSeparator}engine-fault.log';
-    }
-    return '';
   }
 
   void _dispatchEvent(Map<String, dynamic> frame) {
