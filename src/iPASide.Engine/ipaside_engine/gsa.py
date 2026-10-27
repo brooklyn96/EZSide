@@ -424,7 +424,7 @@ def _authenticate_once(
         if _init_ec(init) == _EC_NEWER_MAC_REQUIRED:
             raise GsaError(
                 f"Apple error {_EC_NEWER_MAC_REQUIRED}: this Apple Account needs a Mac with macOS "
-                "10.13 or later, and Apple still refused the newer Mac identity iPASide then tried. "
+                "10.13 or later, and Apple still refused the newer Mac identity EZSide then tried. "
                 "Nothing is wrong with your password."
             )
     _check(init)

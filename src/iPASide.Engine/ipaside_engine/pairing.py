@@ -47,7 +47,7 @@ MISSING_RP_WARNING = (
     "This file has this PC's USB pairing keys, which SideStore and AltStore use "
     "(same as iLoader, including iOS 15–18). "
     "EscapeOS and StikDebug on iOS 26.4 and later also need Remote Pairing keys. "
-    "Plug the iPhone in over USB once, let iPASide create them, then place the file. "
+    "Plug the iPhone in over USB once, let EZSide create them, then place the file. "
     "The cable is not needed afterwards."
 )
 
@@ -487,7 +487,7 @@ def deliver_to_app(
     matched = consumer or match_consumer(bundle_id)
     if matched is None:
         raise PairingError(
-            f"{bundle_id} is not a pairing-file consumer iPASide knows about."
+            f"{bundle_id} is not a pairing-file consumer EZSide knows about."
         )
     body = payload if payload is not None else payload_bytes(udid, lockdown_dir=lockdown_dir)
     record = plistlib.loads(body)
@@ -589,7 +589,7 @@ def deliver_to_device(
                         "name": bundle_id,
                         "bundle_id": bundle_id,
                         "placed": False,
-                        "error": f"{bundle_id} is not a pairing-file consumer iPASide knows about.",
+                        "error": f"{bundle_id} is not a pairing-file consumer EZSide knows about.",
                     }
                 )
                 continue

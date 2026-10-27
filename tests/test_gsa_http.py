@@ -549,7 +549,7 @@ def test_trace_records_the_outcome_and_never_a_secret(isolated_data) -> None:
         {"spd": b"encrypted-session-data", "GsIdmsToken": secret_token, "M2": b"proof"},
     )
     gsa._trace("GsService2/complete", response)
-    text = (isolated_data / "iPASide" / "gsa-trace.log").read_text(encoding="utf-8")
+    text = (isolated_data / "EZSide" / "gsa-trace.log").read_text(encoding="utf-8")
     assert "GsService2/complete" in text
     assert "http=200" in text
     assert "ec=-22411" in text and "hsc=409" in text
@@ -566,7 +566,7 @@ def test_trace_marks_an_html_error_page_without_copying_it(isolated_data) -> Non
     response.content = b"<html><body>Service Temporarily Unavailable secret-page-text</body></html>"
     response.headers = {"Content-Type": "text/html"}
     gsa._trace("GsService2/init", response)
-    text = (isolated_data / "iPASide" / "gsa-trace.log").read_text(encoding="utf-8")
+    text = (isolated_data / "EZSide" / "gsa-trace.log").read_text(encoding="utf-8")
     assert "http=503" in text and " html" in text
     assert "secret-page-text" not in text
 
@@ -580,7 +580,7 @@ def test_trace_never_breaks_sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_trace_file_stays_small(isolated_data) -> None:
-    path = isolated_data / "iPASide" / "gsa-trace.log"
+    path = isolated_data / "EZSide" / "gsa-trace.log"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes((b"old line of trace output\n") * 20_000)
     assert path.stat().st_size > gsa._TRACE_MAX_BYTES
@@ -592,5 +592,5 @@ def test_trace_file_stays_small(isolated_data) -> None:
 def test_gs_request_writes_a_trace_line(monkeypatch: pytest.MonkeyPatch, isolated_data) -> None:
     monkeypatch.setattr(gsa, "_gsa_http", lambda *a, **k: _plist_response({"ec": 0}))
     gsa._gs_request({"o": "init", "u": "probe@example.invalid"}, _ANISETTES)
-    text = (isolated_data / "iPASide" / "gsa-trace.log").read_text(encoding="utf-8")
+    text = (isolated_data / "EZSide" / "gsa-trace.log").read_text(encoding="utf-8")
     assert "GsService2/init" in text and "ec=0" in text

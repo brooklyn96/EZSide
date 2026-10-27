@@ -1,20 +1,20 @@
-; Inno Setup script for iPASide - bundles the Flutter Windows runner + the
+; Inno Setup script for EZSide - bundles the Flutter Windows runner + the
 ; portable Python engine.
 ;
 ; Build (from repo root, after building the app + assembling the engine):
-;   ISCC /DAppVersion=1.0.1 packaging\iPASide.iss
-; Output: dist\installer\iPASide-Setup-<ver>-x64.exe
+;   ISCC /DAppVersion=1.0.0 packaging\EZSide.iss
+; Output: dist\installer\EZSide-Setup-<ver>-x64.exe
 
 #ifndef AppVersion
-  #define AppVersion "1.2.13"
+  #define AppVersion "1.0.0"
 #endif
-#define AppName "iPASide"
-#define AppPublisher "iPASide Contributors"
-#define AppExe "iPASide.exe"
-#define AppUrl "https://github.com/iPASide/iPASide"
+#define AppName "EZSide"
+#define AppPublisher "EZSide"
+#define AppExe "EZSide.exe"
+#define AppUrl "https://github.com/brooklyn96/EZSide"
 ; The AppId also names the Add/Remove Programs key, which the rollback code at the
 ; bottom of this file reads and repairs. Defined once so the two can never drift.
-#define AppId "{9F1C2D3E-4B5A-46C7-8E9F-A0B1C2D3E4F5}"
+#define AppId "{629FBABF-9841-429C-84C3-5F1B313F305E}"
 
 [Setup]
 AppId={{#AppId}
@@ -22,7 +22,7 @@ AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher={#AppPublisher}
 AppSupportURL={#AppUrl}
-; ── Look and feel: iPASide's identity, not the stock wizard ───────────────────
+; ── Look and feel: EZSide's identity, not the stock wizard ───────────────────
 ; dark             force the dark appearance whatever the user's Windows theme is. The
 ;                  installer hands over to a near-black app, and a light wizard opening
 ;                  it is a visible seam.
@@ -43,7 +43,7 @@ DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 OutputDir=..\dist\installer
-OutputBaseFilename=iPASide-Setup-{#AppVersion}-x64
+OutputBaseFilename=EZSide-Setup-{#AppVersion}-x64
 Compression=lzma2/max
 SolidCompression=yes
 ArchitecturesAllowed=x64compatible
@@ -51,14 +51,14 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
 ; `commandline`, not `dialog`. With `dialog` a genuinely fresh install opens on Inno's
 ; stock "Select Setup Install Mode" task dialog — asking all-users or just-me before the
-; branded welcome page is even shown, and undoing the one-screen flow. iPASide is a
+; branded welcome page is even shown, and undoing the one-screen flow. EZSide is a
 ; per-user tool throughout: per-user data, a per-user scheduled task, a per-user Apple ID
 ; session. So there is no answer worth asking for, and /ALLUSERS still works for anyone
 ; who deliberately wants it.
 PrivilegesRequiredOverridesAllowed=commandline
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
-AppMutex=iPASide.Running.Mutex
+AppMutex=EZSide.Running.Mutex
 ; The wizard and Add/Remove entry use the same mark as the app itself.
 SetupIconFile=..\src\iPASide.Flutter\windows\runner\resources\app_icon.ico
 
@@ -78,17 +78,17 @@ DisableDirPage=yes
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Messages]
-; iPASide's own voice. Inno's default copy ("It is recommended that you close all
+; EZSide's own voice. Inno's default copy ("It is recommended that you close all
 ; other applications") tells the user nothing about what they are installing.
 SetupWindowTitle=%1 Setup
-WelcomeLabel1=Install iPASide
-WelcomeLabel2=iPASide signs any .ipa with your own Apple ID and installs it on your iPhone or iPad, over USB or Wi-Fi — no jailbreak and no paid developer account.
+WelcomeLabel1=Install EZSide
+WelcomeLabel2=EZSide signs any .ipa with your own Apple ID and installs it on your iPhone or iPad, over USB or Wi-Fi — no jailbreak and no paid developer account.
 ; Inno appends this to the welcome text. The default ("Click Next to continue") now
 ; contradicts the button, which reads Install because the Ready page is gone.
 ClickNext=Setup installs the app together with its self-contained signing engine. Your Apple ID is only ever sent to Apple.
-WizardInstalling=Installing iPASide
+WizardInstalling=Installing EZSide
 InstallingLabel=Copying the app and its signing engine. The engine is a self-contained Python runtime, so this takes a few seconds.
-FinishedHeadingLabel=iPASide is ready
+FinishedHeadingLabel=EZSide is ready
 FinishedLabel=Connect your iPhone over USB, unlock it and tap Trust. Then sign in with your Apple ID and drop an .ipa onto the window.%n%nYou also need Apple Devices (or iTunes) installed for USB access.
 FinishedLabelNoIcons=Connect your iPhone over USB, unlock it and tap Trust. Then sign in with your Apple ID and drop an .ipa onto the window.
 ClickFinish=Click Finish to close Setup.
@@ -118,7 +118,7 @@ Type: files; Name: "{app}\*.pdb"
 Type: files; Name: "{app}\*.xml"
 ; .NET shipped a runtimes folder and one satellite-resource folder per language.
 ; Nothing in the Flutter payload recreates these, so without naming them an
-; upgrade from an older iPASide leaves ~50 MB of dead files behind.
+; upgrade from an older EZSide leaves ~50 MB of dead files behind.
 Type: filesandordirs; Name: "{app}\runtimes"
 Type: filesandordirs; Name: "{app}\cs"
 Type: filesandordirs; Name: "{app}\de"
@@ -148,14 +148,14 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 
 [Run]
 ; Check: never offer to start a payload that just failed to run. After a rolled-back
-; upgrade the restored older iPASide is fine to launch; a damaged one is not.
+; upgrade the restored older EZSide is fine to launch; a damaged one is not.
 ; No skipifsilent: the in-app updater installs with /SILENT and the user expects the
 ; app to come back afterwards (the update flow closes it so Setup can swap files).
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall; Check: InstalledAppIsUsable
 
 [UninstallDelete]
 ; Leftover WebView2 user-data folder from the legacy WPF/WebView2 app.
-Type: filesandordirs; Name: "{localappdata}\iPASide\WebView2"
+Type: filesandordirs; Name: "{localappdata}\EZSide\WebView2"
 
 [Code]
 // ── Transactional upgrade: move aside, verify, then commit ────────────────────────
@@ -174,7 +174,7 @@ Type: filesandordirs; Name: "{localappdata}\iPASide\WebView2"
 // A first install has nothing to move aside and nothing to fall back to, so it passes
 // through here untouched.
 //
-// %LOCALAPPDATA%\iPASide - the Apple ID session, the signing certificate and private
+// %LOCALAPPDATA%\EZSide - the Apple ID session, the signing certificate and private
 // key, the anisette state and the sideload registry - is never part of any of this.
 // Only {app} ever moves, and the only thing written under the data root is install.log.
 //
@@ -191,7 +191,7 @@ var
   BackupTaken: Boolean;
   // True once the backup has been dealt with for good, either discarded because the new
   // payload verified or successfully put back. Until then the backup is still the only
-  // complete copy of a working iPASide, and DeinitializeSetup will restore it.
+  // complete copy of a working EZSide, and DeinitializeSetup will restore it.
   UpgradeSettled: Boolean;
   PreviousVersion: String;
   // Non-empty once the new payload has failed to verify; drives the final page.
@@ -298,7 +298,7 @@ begin
   // sometimes deleted while this log is being written. The app's own data root already
   // keeps autorefresh.log, and Setup only ever APPENDS here - nothing under that root
   // is created, moved or deleted by an install, a rollback or an uninstall.
-  Result := ExpandConstant('{localappdata}\iPASide\install.log');
+  Result := ExpandConstant('{localappdata}\EZSide\install.log');
 end;
 
 procedure LogInstall(Msg: String);
@@ -308,7 +308,7 @@ var
 begin
   Log(Msg);  // also into Setup's own /LOG file, when one was asked for
   Line := '[' + GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + '] {#AppVersion}: ' + Msg;
-  ForceDirectories(ExpandConstant('{localappdata}\iPASide'));
+  ForceDirectories(ExpandConstant('{localappdata}\EZSide'));
   if LoadStringFromFile(InstallLogPath, Existing) then
     SaveStringToFile(InstallLogPath, Existing + Line + #13#10, False)
   else
@@ -385,7 +385,7 @@ end;
 
 procedure StageUpgrade;
 begin
-  // No iPASide.exe means there is nothing to fall back to: a first install, or a
+  // No EZSide.exe means there is nothing to fall back to: a first install, or a
   // directory some earlier run left half-written. Both install straight in, and the
   // [InstallDelete] rules clear out whatever old layout is lying there.
   if not FileExists(AddBackslash(AppDir) + '{#AppExe}') then
@@ -407,7 +407,7 @@ begin
     DelTree(BackupDir, True, True, True);
   end;
 
-  // AppMutex has already turned the install away if iPASide itself is running, but a
+  // AppMutex has already turned the install away if EZSide itself is running, but a
   // resident engine process, an antivirus scan or an open Explorer window can still
   // hold a handle, and then this fails. A missing safety net is not worth failing an
   // otherwise fine upgrade over, so record it and continue without one.
@@ -445,7 +445,7 @@ end;
 
 procedure RollBackUpgrade;
 begin
-  WizardForm.StatusLabel.Caption := 'Restoring the previous version of iPASide...';
+  WizardForm.StatusLabel.Caption := 'Restoring the previous version of EZSide...';
 
   if RestorePreviousInstall then
   begin
@@ -454,8 +454,8 @@ begin
     // Kept to about five lines: this same text goes on the Finished page, whose label has
     // a fixed height, and anything longer is silently clipped there (seen while testing).
     FailureDetail :=
-      'iPASide {#AppVersion} was installed, but its signing engine did not start, so Setup'
-      + ' put your previous version back - iPASide still works. Your Apple ID session and'
+      'EZSide {#AppVersion} was installed, but its signing engine did not start, so Setup'
+      + ' put your previous version back - EZSide still works. Your Apple ID session and'
       + ' signing material were not touched.' + #13#10#13#10
       + 'Details: ' + InstallLogPath;
   end
@@ -467,7 +467,7 @@ begin
     // once Setup has let go of everything it had open.
     AppUsable := False;
     LogInstall('ROLLBACK FAILED: ' + BackupDir + ' could not be moved back to ' + AppDir);
-    FailureHeading := 'iPASide is not installed';
+    FailureHeading := 'EZSide is not installed';
     FailureDetail :=
       'The new files were removed, but the previous version could not be moved back -'
       + ' something on this PC is holding that folder open. Nothing was lost; it is intact'
@@ -515,9 +515,9 @@ begin
       // Nothing to go back to, so the wizard must not claim success either.
       AppUsable := False;
       LogInstall('install did NOT verify and there was no previous version to restore');
-      FailureHeading := 'iPASide is not ready';
+      FailureHeading := 'EZSide is not ready';
       FailureDetail :=
-        'iPASide was installed, but its signing engine did not start, and there was no'
+        'EZSide was installed, but its signing engine did not start, and there was no'
         + ' previous version to restore. Running Setup again usually fixes a damaged'
         + ' download.' + #13#10#13#10
         + 'Details: ' + InstallLogPath;
@@ -611,7 +611,7 @@ begin
     // WizardDirValue, NOT ExpandConstant('{app}'): {app} is not initialised while the
     // welcome page is showing, and expanding it there is a hard runtime error.
     FinePrint.Caption :=
-      'Free and open source (MIT). No account, no telemetry, no iPASide server.' + #13#10 +
+      'Free and open source (MIT). No account, no telemetry, no EZSide server.' + #13#10 +
       'Installs to ' + WizardDirValue;
 
     // There is no Ready page to press Install on any more, so this is that button.
@@ -621,7 +621,7 @@ begin
   if CurPageID = wpInstalling then
     ShowProgressBar;
 
-  // The [Messages] copy for this page promises a working iPASide and tells the user to
+  // The [Messages] copy for this page promises a working EZSide and tells the user to
   // plug in an iPhone. When the payload failed to verify that is simply untrue, and
   // this page is the only place most people will ever look.
   if (CurPageID = wpFinished) and (FailureHeading <> '') then

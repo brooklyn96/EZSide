@@ -56,7 +56,7 @@ UNSUPPORTED = "unsupported"
 ITUNES_DOWNLOAD_URL = "https://www.apple.com/itunes/download/win64"
 
 # Only the 64-bit installer exists as far as iPASide is concerned - the app itself
-# is x64-only (`ArchitecturesAllowed=x64compatible` in packaging/iPASide.iss), so
+# is x64-only (`ArchitecturesAllowed=x64compatible` in packaging/EZSide.iss), so
 # there is no platform on which a 32-bit download could be the right answer.
 INSTALLER_NAME = "iTunes64Setup.exe"
 
@@ -151,7 +151,7 @@ def status() -> dict[str, Any]:
             )
             if installed
             else (
-                "Apple Mobile Device Service is not installed, so iPASide cannot see "
+                "Apple Mobile Device Service is not installed, so EZSide cannot see "
                 "any iPhone. It comes with iTunes."
             )
         )

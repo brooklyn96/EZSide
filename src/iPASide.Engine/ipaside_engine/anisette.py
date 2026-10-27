@@ -337,7 +337,7 @@ def _describe_worker_exit(code: int | None, stderr_tail: list[str]) -> str:
         return (
             f"Apple's device-provisioning step could not start: its helper process ended with "
             f"exit code {shown} because of a software error, not a Windows setting. Your Apple ID "
-            f"and password were not the problem and were not sent. Reinstalling iPASide usually "
+            f"and password were not the problem and were not sent. Reinstalling EZSide usually "
             f"fixes a damaged install; please report this if it keeps happening.\n\n"
             f"Last output from the helper:\n{tail_text}"
         )
@@ -521,7 +521,7 @@ def _raw_headers() -> dict[str, Any]:
             except OSError as exc:
                 raise AnisetteError(
                     f"Could not start Apple's device-provisioning helper ({exc}). "
-                    "Security software may be blocking iPASide's engine from starting "
+                    "Security software may be blocking EZSide's engine from starting "
                     "a second process."
                 ) from exc
         worker = _worker

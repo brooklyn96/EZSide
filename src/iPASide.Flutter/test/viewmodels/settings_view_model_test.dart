@@ -593,7 +593,7 @@ void main() {
 
   group('SettingsViewModel signed IPAs', () {
     const int mb = 1 << 20;
-    const String engineFolder = r'C:\Users\me\AppData\Local\iPASide\signed';
+    const String engineFolder = r'C:\Users\me\AppData\Local\EZSide\signed';
     const String chosenFolder = r'D:\signed';
 
     setUp(() {

@@ -10,10 +10,10 @@ import 'package:ffi/ffi.dart';
 import 'package:win32/win32.dart';
 
 /// Name of the mutex held by the first GUI instance.
-const String singleInstanceMutexName = 'iPASide.SingleInstance.Mutex';
+const String singleInstanceMutexName = 'EZSide.SingleInstance.Mutex';
 
-/// Name of the marker mutex held for the lifetime of EVERY iPASide process.
-const String runningMutexName = 'iPASide.Running.Mutex';
+/// Name of the marker mutex held for the lifetime of EVERY EZSide process.
+const String runningMutexName = 'EZSide.Running.Mutex';
 
 /// Cross-process "first GUI instance" detection.
 ///
@@ -76,12 +76,12 @@ class NullSingleInstanceGuard implements SingleInstanceGuard {
 }
 
 /// The marker mutex the Inno Setup installer watches through its `AppMutex`
-/// directive, so it can refuse to install over a running iPASide.
+/// directive, so it can refuse to install over a running EZSide.
 ///
 /// It is never used for single-instance gating (that is
 /// [singleInstanceMutexName]). It must be held by BOTH the GUI and the headless
 /// `--auto-refresh` path, because the installer has to detect ANY running
-/// iPASide process - including a background refresh that the single-instance
+/// EZSide process - including a background refresh that the single-instance
 /// mutex deliberately does not cover.
 ///
 /// Holding it more than once in a process is harmless: each hold is a separate
@@ -124,7 +124,7 @@ class _NamedMutex {
 
   /// Creates the mutex, requesting initial ownership when [initiallyOwned].
   ///
-  /// Returns false only when the mutex ALREADY existed, i.e. another iPASide
+  /// Returns false only when the mutex ALREADY existed, i.e. another EZSide
   /// process created it first. A creation *failure* returns true, because no OS
   /// primitive may be the reason the app refuses to start; the worst case is a
   /// second window.

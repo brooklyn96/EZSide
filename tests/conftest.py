@@ -18,7 +18,7 @@ def isolated_app_data(tmp_path_factory, monkeypatch):
 
     Everything in ``paths`` is derived from LOCALAPPDATA and most of it creates
     directories just by being called, so a test that touches the engine without
-    asking for isolation writes into the real %LOCALAPPDATA%\\iPASide - a stray
+    asking for isolation writes into the real %LOCALAPPDATA%\\EZSide - a stray
     tweaks/fixture/Fixture.dylib from an older version of this suite is still
     sitting there. Autouse makes isolation the default: reaching real user data
     now takes a deliberate opt-out rather than merely forgetting to opt in.

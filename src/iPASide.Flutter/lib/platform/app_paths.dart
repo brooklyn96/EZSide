@@ -24,7 +24,7 @@ enum AppDataHost {
   }
 }
 
-/// Well-known per-user data locations: `%LOCALAPPDATA%\iPASide` on Windows and
+/// Well-known per-user data locations: `%LOCALAPPDATA%\EZSide` on Windows and
 /// the platform-native per-user data directory elsewhere.
 ///
 /// The app reads [AppPaths.instance]; [AppPaths.rooted] exists so tests can
@@ -73,7 +73,7 @@ class AppPaths {
     return _join(dataHome ?? Directory.systemTemp.path, _folderName);
   }
 
-  static const String _folderName = 'iPASide';
+  static const String _folderName = 'EZSide';
 
   static String? _windowsDataHome(Map<String, String> environment) {
     final String? localAppData = _nonEmpty(environment['LOCALAPPDATA']);

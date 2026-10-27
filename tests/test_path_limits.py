@@ -74,18 +74,18 @@ def test_deepest_entry_of_a_missing_file_is_zero(tmp_path):
 # --------------------------------------------------------------------------- #
 def test_a_flat_app_keeps_its_scratch_beside_the_signed_output():
     """The disk the user chose is where the heavy I/O belongs, when it fits."""
-    target = Path(r"C:\Users\somebody\AppData\Local\iPASide\signed")
+    target = Path(r"C:\Users\somebody\AppData\Local\EZSide\signed")
     assert sideload._scratch_root(target, FLAT) == target
 
 
 def test_a_deeply_nested_app_moves_its_scratch_somewhere_shorter():
-    target = Path(r"C:\Users\somebody\AppData\Local\iPASide\signed")
+    target = Path(r"C:\Users\somebody\AppData\Local\EZSide\signed")
     assert sideload._scratch_root(target, DEEP) != target
 
 
 def test_an_unmeasured_ipa_changes_nothing():
     """Zero means the IPA could not be read; that is not a reason to relocate."""
-    target = Path(r"C:\Users\somebody\AppData\Local\iPASide\signed")
+    target = Path(r"C:\Users\somebody\AppData\Local\EZSide\signed")
     assert sideload._scratch_root(target, 0) == target
 
 

@@ -140,7 +140,7 @@ class _StatusBody extends StatelessWidget {
           const SizedBox(width: Space.s3),
           Expanded(
             child: Text(
-              'iPASide will fetch the latest release, sign it, and set it up.',
+              'EZSide will fetch the latest release, sign it, and set it up.',
               style: context.t.bodyMuted,
             ),
           ),
@@ -416,7 +416,7 @@ class _ExplainerCard extends StatelessWidget {
             _Point(
               icon: Icons.verified_user_outlined,
               title: 'It signs on device',
-              body: 'iPASide hands LiveContainer the same certificate it signs '
+              body: 'EZSide hands LiveContainer the same certificate it signs '
                   'with, so LiveContainer can sign the apps you add to it '
                   'without a PC.',
             ),

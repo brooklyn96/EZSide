@@ -92,7 +92,7 @@ def list_teams() -> list[dict[str, Any]]:
 def _sanitize_name(name: str) -> str:
     """Apple requires App ID / device names to be alphanumeric + spaces."""
     cleaned = "".join(ch for ch in name if ch.isalnum() or ch == " ").strip()
-    return cleaned or "iPASide"
+    return cleaned or "EZSide"
 
 
 # --------------------------------------------------------------------------- #
@@ -102,7 +102,7 @@ def list_devices(team_id: str) -> list[dict[str, Any]]:
     return _request("ios/listDevices.action", team_id=team_id).get("devices", [])
 
 
-def register_device(team_id: str, udid: str, name: str = "iPASide device") -> dict[str, Any]:
+def register_device(team_id: str, udid: str, name: str = "EZSide device") -> dict[str, Any]:
     result = _request(
         "ios/addDevice.action",
         {"deviceNumber": udid, "name": _sanitize_name(name)},
@@ -119,7 +119,7 @@ def list_certificates(team_id: str) -> list[dict[str, Any]]:
     return result.get("certificates", [])
 
 
-def submit_csr(team_id: str, csr_pem: str, machine_name: str = "iPASide") -> dict[str, Any]:
+def submit_csr(team_id: str, csr_pem: str, machine_name: str = "EZSide") -> dict[str, Any]:
     result = _request(
         "ios/submitDevelopmentCSR.action",
         {"csrContent": csr_pem, "machineId": str(uuid.uuid4()), "machineName": machine_name},

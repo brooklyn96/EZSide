@@ -143,9 +143,9 @@ class UpdateViewModel extends BaseViewModel {
       // Prefer an exit-failure detail over the generic hand-off sentence.
       if (_last?.outcome == UpdateOutcome.error) {
         return _last!.detail ??
-            'The installer is running. iPASide will restart when it finishes.';
+            'The installer is running. EZSide will restart when it finishes.';
       }
-      return 'The installer is running. iPASide will restart when it finishes.';
+      return 'The installer is running. EZSide will restart when it finishes.';
     }
     if (_isBusy) return 'Checking for updates\u2026';
 
@@ -227,7 +227,7 @@ class UpdateViewModel extends BaseViewModel {
         _last = const UpdateCheck(
           UpdateOutcome.error,
           detail:
-              'The installer is running, but iPASide could not close itself. '
+              'The installer is running, but EZSide could not close itself. '
               'Close the app so Setup can finish.',
         );
         notify();

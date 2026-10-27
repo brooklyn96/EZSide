@@ -622,8 +622,8 @@ class AccountCertificate {
 
   /// Who registered it, in words for a person rather than a machine name.
   String get owner {
-    if (inUseHere) return 'iPASide · signing with it now';
-    if (ours) return 'iPASide · another machine';
+    if (inUseHere) return 'EZSide · signing with it now';
+    if (ours) return 'EZSide · another machine';
     return machine ?? 'Unknown';
   }
 

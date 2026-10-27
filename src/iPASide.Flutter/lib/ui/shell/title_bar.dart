@@ -73,7 +73,7 @@ class _TitleBarState extends State<TitleBar> with WindowListener {
                   children: [
                     const LogoMark(size: Sizes.logoMark),
                     const SizedBox(width: Space.s3 - 2),
-                    Text('iPASide', style: context.t.wordmark),
+                    Text('EZSide', style: context.t.wordmark),
                     const SizedBox(width: Space.s3 - 2),
                     Container(
                       padding: Pad.chip,

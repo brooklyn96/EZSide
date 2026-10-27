@@ -1,3 +1,17 @@
+## EZSide
+
+EZSide is a build of [iPASide](https://github.com/pwnapplehat/iPASide) by
+pwnapplehat (MIT License), maintained here. It installs and runs next to iPASide
+without sharing anything with it: its own app, its own data folder, its own updates.
+
+- **Download:** [latest release](https://github.com/brooklyn96/EZSide/releases/latest)
+- **Data folder:** `%LOCALAPPDATA%\EZSide`
+- **License:** MIT, see [LICENSE](LICENSE). Upstream details are in [UPSTREAM.md](UPSTREAM.md).
+
+The text below is the upstream iPASide README.
+
+---
+
 <div align="center">
 
 <img src="docs/brand/icon.png" alt="iPASide" width="128" height="128">
@@ -8,11 +22,11 @@
 
 No jailbreak. No paid developer account. No closed-source middleman.
 
-[![Download](https://img.shields.io/github/v/release/pwnapplehat/iPASide?label=download&style=for-the-badge&color=6366f1)](https://github.com/pwnapplehat/iPASide/releases/latest)
+[![Download](https://img.shields.io/github/v/release/brooklyn96/EZSide?label=download&style=for-the-badge&color=6366f1)](https://github.com/brooklyn96/EZSide/releases/latest)
 [![License](https://img.shields.io/badge/license-MIT-informational?style=for-the-badge)](LICENSE)
 [![Windows](https://img.shields.io/badge/Windows%2010%2F11-64--bit-blue?style=for-the-badge)](#get-started)
 [![Website](https://img.shields.io/badge/ipaside.com-visit-8c5cf0?style=for-the-badge)](https://ipaside.com)
-[![CI](https://img.shields.io/github/actions/workflow/status/pwnapplehat/iPASide/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/pwnapplehat/iPASide/actions/workflows/ci.yml)
+[![CI](https://img.shields.io/github/actions/workflow/status/brooklyn96/EZSide/ci.yml?branch=main&style=for-the-badge&label=CI)](https://github.com/brooklyn96/EZSide/actions/workflows/ci.yml)
 [![Tests](https://img.shields.io/badge/tests-1294-4cc38a?style=for-the-badge)](#quality)
 
 *Open source, end to end. Nothing between your Apple ID and Apple.*
@@ -24,7 +38,7 @@ No jailbreak. No paid developer account. No closed-source middleman.
 ## Get started
 
 **1. Install iPASide.** Download the installer from the
-[latest release](https://github.com/pwnapplehat/iPASide/releases/latest) and run it.
+[latest release](https://github.com/brooklyn96/EZSide/releases/latest) and run it.
 It installs just for you and never asks for administrator rights.
 
 You also need Apple's **[Apple Devices](https://apps.microsoft.com/detail/9np83lwlpz9k)**
@@ -207,7 +221,7 @@ A Windows app driving a Python engine that does the Apple-facing work:
 - **Signing** — a modern `zsign` (SHA256-only CodeDirectory, canonical DER
   entitlements), built from source, with dylib injection and extension stripping.
 - **Auto-refresh** — a registry tracks each install's expiry, and a daily Windows
-  scheduled task runs `iPASide.exe --auto-refresh` to re-sign what is due.
+  scheduled task runs `EZSide.exe --auto-refresh` to re-sign what is due.
 
 ## Build it yourself
 

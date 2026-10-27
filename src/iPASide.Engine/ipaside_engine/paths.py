@@ -1,4 +1,4 @@
-"""Filesystem locations for iPASide's cached state.
+"""Filesystem locations for EZSide's cached state.
 
 All mutable, machine-specific data (anisette provisioning, Apple session, signing
 material) lives under a single per-user data directory so it is easy to find,
@@ -12,7 +12,7 @@ import os
 import sys
 from pathlib import Path
 
-APP_NAME = "iPASide"
+APP_NAME = "EZSide"
 
 
 def resource_dir() -> Path:

@@ -29,9 +29,9 @@ void main() {
     test('keeps a https release page from GitHub', () {
       expect(
         service.resolveReleaseNotesUri(
-          'https://github.com/pwnapplehat/iPASide/releases/tag/v1.2.0',
+          'https://github.com/brooklyn96/EZSide/releases/tag/v1.2.0',
         ).toString(),
-        'https://github.com/pwnapplehat/iPASide/releases/tag/v1.2.0',
+        'https://github.com/brooklyn96/EZSide/releases/tag/v1.2.0',
       );
     });
 
@@ -146,7 +146,7 @@ void main() {
       );
 
       const String page =
-          'https://github.com/pwnapplehat/iPASide/releases/tag/v1.2.0';
+          'https://github.com/brooklyn96/EZSide/releases/tag/v1.2.0';
       expect(await service.openReleaseNotes(page), isTrue);
       expect(launches.single.$1, 'cmd');
       expect(launches.single.$2, <String>['/c', 'start', '', page]);

@@ -48,7 +48,7 @@ class _DiagnosticsBody extends StatelessWidget {
                     Text('Diagnostics', style: context.t.display),
                     const SizedBox(height: Space.s1),
                     Text(
-                      'Confirms iPASide can reach Apple and your device.',
+                      'Confirms EZSide can reach Apple and your device.',
                       style: context.t.bodyMuted,
                     ),
                   ],

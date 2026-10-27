@@ -1,4 +1,4 @@
-# Build the full iPASide Windows installer:
+# Build the full EZSide Windows installer:
 #   1. assemble the portable Python engine
 #   2. build the Flutter Windows runner (AOT release)
 #   3. compile the Inno Setup installer
@@ -6,7 +6,7 @@
 # Usage (from repo root):  pwsh packaging/build-installer.ps1 -Version 1.0.0
 
 param(
-    [string]$Version = "1.2.13",
+    [string]$Version = "1.0.0",
     [string]$Python = "",
     [string]$Flutter = ""
 )
@@ -77,8 +77,8 @@ finally {
 }
 
 $runnerDir = "src/iPASide.Flutter/build/windows/x64/runner/Release"
-if (-not (Test-Path "$runnerDir/iPASide.exe")) {
-    throw "expected $runnerDir/iPASide.exe - check BINARY_NAME in windows/CMakeLists.txt"
+if (-not (Test-Path "$runnerDir/EZSide.exe")) {
+    throw "expected $runnerDir/EZSide.exe - check BINARY_NAME in windows/CMakeLists.txt"
 }
 
 # The runner needs the exe, flutter_windows.dll, one DLL per plugin, and data/
@@ -98,7 +98,7 @@ $declaredPlugins = foreach ($listName in "FLUTTER_PLUGIN_LIST", "FLUTTER_FFI_PLU
 }
 Write-Host "  plugins: $($declaredPlugins -join ', ')"
 
-$expected = @("iPASide.exe", "flutter_windows.dll", "data")
+$expected = @("EZSide.exe", "flutter_windows.dll", "data")
 $expected += $declaredPlugins | ForEach-Object { "${_}_plugin.dll" }
 
 $stale = @()
@@ -143,7 +143,7 @@ if (-not $iscc) {
     $cmd = Get-Command ISCC.exe -ErrorAction SilentlyContinue
     if ($cmd) { $iscc = $cmd.Source } else { throw "Inno Setup (ISCC.exe) not found. Install JRSoftware.InnoSetup." }
 }
-& $iscc "/DAppVersion=$Version" "packaging/iPASide.iss"
+& $iscc "/DAppVersion=$Version" "packaging/EZSide.iss"
 if ($LASTEXITCODE -ne 0) { throw "ISCC failed ($LASTEXITCODE)" }
 
 # 4. Checksums. The in-app updater refuses to install anything it cannot verify
@@ -158,5 +158,5 @@ $lines = foreach ($file in Get-ChildItem $installerDir -Filter *.exe | Sort-Obje
 Set-Content -Path $sumsPath -Value $lines -Encoding ascii
 $lines | ForEach-Object { Write-Host "  $_" }
 
-Write-Host "Installer -> dist/installer/iPASide-Setup-$Version-x64.exe"
+Write-Host "Installer -> dist/installer/EZSide-Setup-$Version-x64.exe"
 Write-Host "Checksums -> $sumsPath"

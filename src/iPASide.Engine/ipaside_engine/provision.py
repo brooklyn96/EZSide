@@ -29,13 +29,14 @@ _BUNDLE_CACHE = "bundle.json"
 _IDENTITY_P12 = "identity.p12"
 _PROFILE = "profile.mobileprovision"
 
-#: The machine name iPASide registers its certificates under.
+#: The machine name EZSide registers its certificates under.
 #:
 #: Load-bearing rather than cosmetic: Apple's per-machine certificate limit is what lets
 #: one account hold a certificate for Xcode, another for SideStore, and this one at the
 #: same time, so it is also how a re-issue tells ours apart from theirs. Changing it
-#: orphans the certificate already issued under the old name.
-CERTIFICATE_MACHINE_NAME = "iPASide"
+#: orphans the certificate already issued under the old name. It differs from upstream
+#: iPASide's on purpose, so the two apps never revoke each other's certificate.
+CERTIFICATE_MACHINE_NAME = "EZSide"
 
 
 def _account_slug(email: str | None) -> str | None:
@@ -194,7 +195,7 @@ def _ensure_certificate(team_id: str, account_slug: str | None) -> tuple[bytes, 
         if revoke_failure is not None:
             raise gsa.GsaError(
                 f"Apple would not issue a signing certificate ({exc}), and the old "
-                f"iPASide certificate could not be revoked to make room for it "
+                f"EZSide certificate could not be revoked to make room for it "
                 f"({revoke_failure}). Revoking it in the Apple Developer portal, under "
                 "Certificates, will let this succeed."
             ) from exc
@@ -280,8 +281,8 @@ def _ensure_app_groups(
 def ensure_signing_assets(
     bundle_id: str,
     udid: str,
-    app_name: str = "iPASide App",
-    device_name: str = "iPASide device",
+    app_name: str = "EZSide App",
+    device_name: str = "EZSide device",
     on_step: Callable[[str], None] | None = None,
     app_groups: list[str] | None = None,
 ) -> dict[str, Any]:

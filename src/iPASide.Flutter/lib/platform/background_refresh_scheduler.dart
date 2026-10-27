@@ -7,7 +7,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 
 /// Name of the OS scheduled task, matched exactly by create, delete and query.
-const String autoRefreshTaskName = 'iPASide Auto-Refresh';
+const String autoRefreshTaskName = 'EZSide Auto-Refresh';
 
 /// Raised when the OS scheduler rejects a create or delete.
 ///
@@ -24,7 +24,7 @@ class BackgroundRefreshException implements Exception {
 }
 
 /// OS-level daily background refresh: schedules a headless
-/// `iPASide --auto-refresh` run that re-signs apps whose free-account signature
+/// `EZSide --auto-refresh` run that re-signs apps whose free-account signature
 /// is about to expire, without the UI running.
 abstract class BackgroundRefreshScheduler {
   /// Whether this OS has a scheduler integration.
@@ -48,7 +48,7 @@ BackgroundRefreshScheduler createBackgroundRefreshScheduler() =>
     ? const WindowsBackgroundRefreshScheduler()
     : const UnsupportedBackgroundRefreshScheduler();
 
-/// Manages the "iPASide Auto-Refresh" Windows Scheduled Task - daily at noon,
+/// Manages the "EZSide Auto-Refresh" Windows Scheduled Task - daily at noon,
 /// running `"{exe}" --auto-refresh` - through `schtasks.exe`.
 class WindowsBackgroundRefreshScheduler implements BackgroundRefreshScheduler {
   /// Creates the scheduler; it holds no state between calls.
@@ -140,7 +140,7 @@ class WindowsBackgroundRefreshScheduler implements BackgroundRefreshScheduler {
 <?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
-    <Description>Re-signs the apps iPASide has sideloaded, before their 7-day free-account signature expires.</Description>
+    <Description>Re-signs the apps EZSide has sideloaded, before their 7-day free-account signature expires.</Description>
   </RegistrationInfo>
   <Triggers>
     <CalendarTrigger>

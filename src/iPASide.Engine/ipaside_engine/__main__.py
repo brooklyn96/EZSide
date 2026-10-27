@@ -104,7 +104,7 @@ def _emit(args: argparse.Namespace, payload: Any) -> None:
 
 
 def _print_doctor(report: dict[str, Any]) -> None:
-    print("iPASide doctor")
+    print("EZSide doctor")
     print("=" * 60)
     for check in report["checks"]:
         glyph = _STATUS_GLYPH.get(check["status"], "[    ]")
@@ -341,7 +341,7 @@ def _cmd_provision(args: argparse.Namespace) -> int:
             args.bundle_id,
             udid,
             app_name=args.app_name or args.bundle_id,
-            device_name=args.device_name or "iPASide device",
+            device_name=args.device_name or "EZSide device",
         )
     except (gsa.GsaError, developer.DeveloperServicesError) as exc:
         if args.json:
@@ -646,7 +646,7 @@ def _cmd_jailbreak(args: argparse.Namespace) -> int:
             else:
                 print(f"Installed {jailbreak.TOOL['name']} ({result['bundle_id']}).")
                 print(
-                    "Open it on your iPhone to run the jailbreak. iPASide will refresh it "
+                    "Open it on your iPhone to run the jailbreak. EZSide will refresh it "
                     "before its 7-day profile expires."
                 )
             return 0
@@ -779,9 +779,9 @@ def _cmd_slots(args: argparse.Namespace) -> int:
     for cert in report["certificates"]:
         # Whose it is decides whether revoking it is housekeeping or sabotage.
         if cert["in_use_here"]:
-            owner = "iPASide (this machine - signing with it now)"
+            owner = "EZSide (this machine - signing with it now)"
         elif cert["ours"]:
-            owner = "iPASide (another machine)"
+            owner = "EZSide (another machine)"
         else:
             owner = cert["machine"] or "unknown"
         print(f"  {cert['serial']}  expires {cert['expires']}")
@@ -830,7 +830,7 @@ def _cmd_revoke_cert(args: argparse.Namespace) -> int:
     print(f"Revoked {result['revoked']} ({result['machine'] or 'unknown machine'}).")
     if result["invalidates_local_apps"]:
         print(
-            "That is the certificate iPASide signs with on this machine, so the apps it "
+            "That is the certificate EZSide signs with on this machine, so the apps it "
             "installed will stop opening. Sideload or refresh one to get a new one, and "
             "LiveContainer will be handed the replacement automatically."
         )
@@ -1009,7 +1009,7 @@ def _cmd_version(args: argparse.Namespace) -> int:
     if args.json:
         _emit(args, {"version": __version__})
     else:
-        print(f"iPASide Engine {__version__}")
+        print(f"EZSide Engine {__version__}")
     return 0
 
 
@@ -1368,7 +1368,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         prog="ipaside_engine",
-        description="iPASide Engine - iOS device + Apple services core.",
+        description="EZSide Engine - iOS device + Apple services core.",
         parents=[common],
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1536,7 +1536,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="pairing_import",
         default=None,
         metavar="PATH",
-        help="store a pairing plist from another tool (optional; iPASide can create one)",
+        help="store a pairing plist from another tool (optional; EZSide can create one)",
     )
     pairing_actions.add_argument(
         "--create",
@@ -1618,7 +1618,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="folder for the downloaded IPA (default: the app's downloads folder)",
     )
 
-    sub.add_parser("installs", parents=[common], help="list apps iPASide has sideloaded (with expiry)")
+    sub.add_parser("installs", parents=[common], help="list apps EZSide has sideloaded (with expiry)")
 
     # transport, not target: a refresh reinstalls onto the device its record names, so
     # --udid would be meaningless, but the transport preference still has to be honoured
@@ -1635,7 +1635,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     signed_parser = sub.add_parser(
-        "signed", parents=[common], help="show or clean up the signed IPAs iPASide has kept"
+        "signed", parents=[common], help="show or clean up the signed IPAs EZSide has kept"
     )
     signed_parser.add_argument(
         "--clean", action="store_true", help="delete the signed IPAs in the folder"

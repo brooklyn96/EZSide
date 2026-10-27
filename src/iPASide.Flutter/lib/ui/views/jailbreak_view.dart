@@ -257,7 +257,7 @@ class _RunCard extends StatelessWidget {
           Alert(
             kind: AlertKind.success,
             title: 'Installed $name${_version(vm)}',
-            message: 'Open $name on your iPhone to run the jailbreak. iPASide will '
+            message: 'Open $name on your iPhone to run the jailbreak. EZSide will '
                 'refresh it before its 7-day profile expires, like any sideloaded app.',
           ),
         ],
@@ -284,10 +284,10 @@ class _ExplainerCard extends StatelessWidget {
             const SizedBox(height: Space.s3),
             const _Point(
               icon: Icons.download_outlined,
-              title: 'iPASide installs it, your phone runs it',
-              body: 'iPASide downloads Dopamine, signs it with your free Apple ID and '
+              title: 'EZSide installs it, your phone runs it',
+              body: 'EZSide downloads Dopamine, signs it with your free Apple ID and '
                   'installs it over USB \u2014 the same as any sideload. The jailbreak '
-                  'itself runs on your iPhone the first time you open Dopamine. iPASide '
+                  'itself runs on your iPhone the first time you open Dopamine. EZSide '
                   'never runs an exploit.',
             ),
             const SizedBox(height: Space.s4),
@@ -295,7 +295,7 @@ class _ExplainerCard extends StatelessWidget {
               icon: Icons.memory_outlined,
               title: 'It depends on your device and iOS build',
               body: 'Support can differ between devices with the same chip, and beta-only '
-                  'support depends on the exact build. iPASide checks the live Dopamine '
+                  'support depends on the exact build. EZSide checks the live Dopamine '
                   'compatibility list before it enables Install.',
             ),
             const SizedBox(height: Space.s4),

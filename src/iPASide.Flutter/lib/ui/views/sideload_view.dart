@@ -94,7 +94,7 @@ class _SideloadViewState extends State<SideloadView> {
                 Text('Sideload an app', style: context.t.display),
                 const SizedBox(height: Space.s1 + 2),
                 Text(
-                  'Choose an .ipa \u2014 iPASide signs it with your Apple ID and '
+                  'Choose an .ipa \u2014 EZSide signs it with your Apple ID and '
                   'installs it to your iPhone.',
                   style: context.t.bodyMuted,
                 ),

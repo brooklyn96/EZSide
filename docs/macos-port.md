@@ -129,7 +129,7 @@ portable engine under `Contents/Resources/`. Codesign with a Developer ID
 Application certificate and the hardened runtime enabled, covering every nested
 Mach-O: `python3`, the native wheels' `.so`/`.dylib` files, and the vendored
 zsign. Then notarize with `notarytool` and staple the ticket. This replaces the
-Inno Setup step in `packaging/build-installer.ps1` and `packaging/iPASide.iss`.
+Inno Setup step in `packaging/build-installer.ps1` and `packaging/EZSide.iss`.
 The distribution format, DMG versus zip, is an open decision.
 
 ### 9. Updater install step and asset selection

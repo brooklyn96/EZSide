@@ -207,7 +207,7 @@ class SettingsViewModel extends BaseViewModel {
       message:
           'This permanently deletes ${describeFileCount(_signedCount)} from '
           '$signedDirectoryText and frees ${describeBytes(_signedBytes)}.\n\n'
-          'The apps already installed on your iPhone are not touched. iPASide '
+          'The apps already installed on your iPhone are not touched. EZSide '
           'will simply sign an app again the next time you install it.',
       confirmLabel: 'Delete',
       danger: true,

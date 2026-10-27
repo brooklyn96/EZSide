@@ -100,11 +100,11 @@ class AppleSupportViewModel extends BaseViewModel {
   String get message {
     if (_installerRunning) {
       return 'The iTunes installer is running. When it finishes, check again \u2014 '
-          'iPASide will see your iPhone without a restart.';
+          'EZSide will see your iPhone without a restart.';
     }
     final String detail = _status?.detail ?? '';
     if (isMissing) {
-      return '$detail iPASide can download it from Apple '
+      return '$detail EZSide can download it from Apple '
           '(about 200 MB) and verify Apple signed it before running it.';
     }
     return detail;

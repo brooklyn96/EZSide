@@ -382,7 +382,7 @@ class RemoteAnisette:
             except _NeedsProvisioning:
                 raise AnisetteError(
                     "The anisette service rejected a freshly provisioned identity. Try again "
-                    "later; if it keeps happening, report it with %LOCALAPPDATA%\\iPASide\\gsa-trace.log."
+                    "later; if it keeps happening, report it with %LOCALAPPDATA%\\EZSide\\gsa-trace.log."
                 ) from None
 
     # -- client identity -------------------------------------------------------- #

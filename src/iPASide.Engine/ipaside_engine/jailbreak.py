@@ -64,7 +64,7 @@ RELEASES_URL = "https://api.github.com/repos/opa334/Dopamine/releases/latest"
 #: Where the compatibility list lives. Fetched fresh on every advise so support for a
 #: newly jailbreakable iOS reaches users by editing this file, not by shipping an app.
 COMPAT_URL = (
-    "https://raw.githubusercontent.com/pwnapplehat/iPASide/main/compat/dopamine.json"
+    "https://raw.githubusercontent.com/brooklyn96/EZSide/main/compat/dopamine.json"
 )
 
 

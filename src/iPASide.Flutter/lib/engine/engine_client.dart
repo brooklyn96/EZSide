@@ -420,10 +420,10 @@ class EngineClient with EngineCommandRunner {
       final String? home = Platform.environment['HOME'];
       final Directory dir;
       if (localAppData != null && localAppData.isNotEmpty) {
-        dir = Directory('$localAppData${Platform.pathSeparator}iPASide');
+        dir = Directory('$localAppData${Platform.pathSeparator}EZSide');
       } else if (home != null && home.isNotEmpty) {
         dir = Directory(
-          '$home${Platform.pathSeparator}.local${Platform.pathSeparator}share${Platform.pathSeparator}iPASide',
+          '$home${Platform.pathSeparator}.local${Platform.pathSeparator}share${Platform.pathSeparator}EZSide',
         );
       } else {
         return;
@@ -467,11 +467,11 @@ class EngineClient with EngineCommandRunner {
   String _faultLogPath() {
     final String? localAppData = Platform.environment['LOCALAPPDATA'];
     if (localAppData != null && localAppData.isNotEmpty) {
-      return '$localAppData${Platform.pathSeparator}iPASide${Platform.pathSeparator}engine-fault.log';
+      return '$localAppData${Platform.pathSeparator}EZSide${Platform.pathSeparator}engine-fault.log';
     }
     final String? home = Platform.environment['HOME'];
     if (home != null && home.isNotEmpty) {
-      return '$home${Platform.pathSeparator}.local${Platform.pathSeparator}share${Platform.pathSeparator}iPASide${Platform.pathSeparator}engine-fault.log';
+      return '$home${Platform.pathSeparator}.local${Platform.pathSeparator}share${Platform.pathSeparator}EZSide${Platform.pathSeparator}engine-fault.log';
     }
     return '';
   }

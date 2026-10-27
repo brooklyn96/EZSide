@@ -122,7 +122,7 @@ class AccountViewModel extends BaseViewModel {
         email: _accounts.activeEmail,
       );
       _notice = result.invalidatesLocalApps
-          ? 'Revoked. The apps iPASide installed here will stop opening until you '
+          ? 'Revoked. The apps EZSide installed here will stop opening until you '
               'sideload or refresh one, which provisions a new certificate.'
           : 'Revoked ${result.machine ?? serial}.';
     } catch (error) {
@@ -173,17 +173,17 @@ class AccountViewModel extends BaseViewModel {
 
   static String _revokeWarning(AccountCertificate certificate) {
     if (certificate.inUseHere) {
-      return 'This is the certificate iPASide signs with on this PC. Revoking it stops '
+      return 'This is the certificate EZSide signs with on this PC. Revoking it stops '
           'every app it installed from opening, including LiveContainer, until you '
           'sideload or refresh something. Do it if Apple says you have too many '
           'certificates and you want to start fresh.';
     }
     if (certificate.ours) {
-      return 'iPASide registered this on another machine. Revoking it stops apps that '
+      return 'EZSide registered this on another machine. Revoking it stops apps that '
           'machine installed from opening, but nothing installed from this one.';
     }
     return 'This belongs to ${certificate.machine ?? 'another tool'} \u2014 not to '
-        'iPASide. Revoking it stops the apps that tool installed from opening until it '
+        'EZSide. Revoking it stops the apps that tool installed from opening until it '
         'issues itself a new one.';
   }
 }

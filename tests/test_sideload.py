@@ -366,7 +366,7 @@ def test_signed_report_on_a_folder_that_does_not_exist_is_not_an_error(tmp_path)
 def test_signed_report_defaults_to_the_apps_own_folder(isolated_data):
     report = sideload.signed_status()
 
-    assert Path(report["directory"]) == isolated_data / "iPASide" / "signed"
+    assert Path(report["directory"]) == isolated_data / "EZSide" / "signed"
     assert report["count"] == 0
 
 

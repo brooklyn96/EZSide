@@ -29,7 +29,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   // Matches Sizes.windowWidth/windowHeight; window_manager re-centres and
   // applies the minimum size once Dart is up.
   Win32Window::Size size(1120, 720);
-  if (!window.Create(L"iPASide", origin, size)) {
+  if (!window.Create(L"EZSide", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

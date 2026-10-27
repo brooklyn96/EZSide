@@ -79,7 +79,7 @@ Map<String, dynamic> _overview() => <String, dynamic>{
       'certificates': <dynamic>[
         <String, dynamic>{
           'serial': ourSerial,
-          'machine': 'iPASide',
+          'machine': 'EZSide',
           'type': 'iOS Development',
           'expires': '2027-07-26T11:13:24',
           'ours': true,
@@ -202,7 +202,7 @@ void main() {
           .firstWhere((AccountCertificate c) => c.serial == ourSerial);
 
       expect(mine.inUseHere, isTrue);
-      expect(mine.owner, contains('iPASide'));
+      expect(mine.owner, contains('EZSide'));
       expect(mine.owner, contains('signing with it now'));
     });
 
@@ -221,7 +221,7 @@ void main() {
       final Map<String, dynamic> payload = _overview();
       (payload['certificates'] as List<dynamic>).add(<String, dynamic>{
         'serial': 'OTHERMACHINE01',
-        'machine': 'iPASide',
+        'machine': 'EZSide',
         'ours': true,
         'in_use_here': false,
       });
@@ -302,7 +302,7 @@ void main() {
           'revoke-cert',
           _ok(<String, dynamic>{
             'revoked': ourSerial,
-            'machine': 'iPASide',
+            'machine': 'EZSide',
             'was_ours': true,
             'invalidates_local_apps': true,
           }),

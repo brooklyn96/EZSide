@@ -633,10 +633,10 @@ def _install_failure_hint(
 
     if not facts and device_version and device_version[0] <= LEGACY_SIGNATURE_MAX_MAJOR:
         facts.append(
-            f"{target_name} runs iOS {os_text}, which is older than iPASide is built for. "
-            + ("iPASide signed the app with the older SHA-1 format that iOS 10 and earlier need, "
+            f"{target_name} runs iOS {os_text}, which is older than EZSide is built for. "
+            + ("EZSide signed the app with the older SHA-1 format that iOS 10 and earlier need, "
                "so the device is rejecting something else. " if legacy_signed else "")
-            + "Very old iOS can refuse apps for reasons outside iPASide's control, such as a "
+            + "Very old iOS can refuse apps for reasons outside EZSide's control, such as a "
             "newer Apple certificate chain."
         )
     return " ".join(facts) or None

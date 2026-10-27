@@ -40,7 +40,7 @@ class UpdateCheck {
   final String? detail;
 }
 
-/// Checks GitHub for a newer iPASide, downloads it, and verifies it before
+/// Checks GitHub for a newer EZSide, downloads it, and verifies it before
 /// offering it to the user.
 ///
 /// Deliberately fail-closed, in the same order as every step below:
@@ -59,8 +59,8 @@ class UpdateService {
   UpdateService({
     required this.currentVersion,
     AppPaths? paths,
-    this.owner = 'pwnapplehat',
-    this.repo = 'iPASide',
+    this.owner = 'brooklyn96',
+    this.repo = 'EZSide',
     HttpClient? httpClient,
     void Function(String message)? log,
     DetachedLauncher? launchDetached,
@@ -358,7 +358,7 @@ class UpdateService {
   void _applyHeaders(HttpClientRequest request) {
     // GitHub's API rejects requests without a User-Agent.
     request.headers.set(HttpHeaders.userAgentHeader,
-        'iPASide/$currentVersion (+https://github.com/$owner/$repo)');
+        'EZSide/$currentVersion (+https://github.com/$owner/$repo)');
     request.headers.set(HttpHeaders.acceptHeader, 'application/vnd.github+json');
   }
 

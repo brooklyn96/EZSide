@@ -105,7 +105,7 @@ void main() {
       expect(
         find.descendant(
           of: find.byType(DragToMoveArea),
-          matching: find.text('iPASide'),
+          matching: find.text('EZSide'),
         ),
         findsOneWidget,
       );

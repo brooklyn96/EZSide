@@ -150,7 +150,7 @@ class _Hero extends StatelessWidget {
                   constraints: const BoxConstraints(maxWidth: 560),
                   child: Text(
                     'Sign any .ipa with your free Apple ID and install it over USB or '
-                    'Wi-Fi \u2014 no jailbreak. iPASide auto-refreshes it before the '
+                    'Wi-Fi \u2014 no jailbreak. EZSide auto-refreshes it before the '
                     '7-day profile expires.',
                     style: context.t.bodyMuted,
                   ),

@@ -57,7 +57,7 @@ class _Portal:
         self.revoked.append(serial)
         self.certs = [c for c in self.certs if c.get("serialNumber") != serial]
 
-    def submit_csr(self, _team_id, _csr_pem, machine_name="iPASide"):
+    def submit_csr(self, _team_id, _csr_pem, machine_name="EZSide"):
         self.machine_names.append(machine_name)
         if self.csr_error is not None:
             raise self.csr_error

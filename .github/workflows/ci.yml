@@ -2,13 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
     tags: ['v*']
   pull_request:
     branches: [main]
 
 permissions:
-  contents: read   # CI never writes to a release; see the build job's note
+  contents: read   # only the release job at the bottom writes, and it asks for that itself
 
 env:
   FLUTTER_VERSION: '3.44.8'
@@ -119,25 +119,45 @@ jobs:
       # machine, and the result is downloadable for inspection or comparison.
       - uses: actions/upload-artifact@v7
         with:
-          name: iPASide-installer
+          name: EZSide-installer
           path: |
             dist/installer/*.exe
             dist/installer/SHA256SUMS.txt
           if-no-files-found: error
 
-      # CI deliberately does NOT publish the release. Exactly one build may ever
-      # reach a release, for two reasons:
-      #
-      # 1. There is no iPhone on a GitHub runner, so a CI-built installer has
-      #    never been installed, launched, or driven against a device. Since the
-      #    installer is unsigned and users have to click through SmartScreen to
-      #    run it, shipping a binary nobody has executed is the wrong trade.
-      # 2. Two producers writing to one release corrupts the updater. Uploads
-      #    overwrite same-named assets, so a CI build landing on a release would
-      #    replace the verified installer and rewrite SHA256SUMS.txt; the updater
-      #    is fail-closed on a checksum mismatch, so any mismatch between the two
-      #    leaves users unable to update at all.
-      #
-      # Releasing is therefore deliberate: build locally, verify against a real
-      # device, then `gh release create <tag> dist/installer/*` with both files.
-      # See docs/releasing.md.
+  # CI is the only producer of EZSide releases. Exactly one build may ever reach a
+  # release: this job publishes the installer the build job just made, on a `v*`
+  # tag push and nowhere else, and nobody uploads to a release by hand. Uploads
+  # overwrite same-named assets, so a second producer would replace the installer
+  # and rewrite SHA256SUMS.txt; the updater is fail-closed on a checksum mismatch,
+  # so any mismatch between the two leaves users unable to update at all. This is
+  # the only job with write access. See docs/releasing.md.
+  release:
+    name: Publish release
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v7
+        with:
+          name: EZSide-installer
+          path: dist/installer
+
+      - name: Create or update the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="$GITHUB_REF_NAME"
+          ver="${tag#v}"
+          setup="dist/installer/EZSide-Setup-${ver}-x64.exe"
+          sums="dist/installer/SHA256SUMS.txt"
+          test -f "$setup"
+          test -f "$sums"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$tag" "$setup" "$sums" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$tag" "$setup" "$sums" --verify-tag \
+              --title "EZSide $ver" --notes "EZSide $ver" --repo "$GITHUB_REPOSITORY"
+          fi

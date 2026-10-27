@@ -82,7 +82,7 @@ Future<void> main(List<String> args) async {
     center: true,
     backgroundColor: Colors.transparent,
     titleBarStyle: TitleBarStyle.hidden,
-    title: 'iPASide',
+    title: 'EZSide',
   );
   await windowManager.waitUntilReadyToShow(windowOptions, () async {
     await windowManager.show();
@@ -297,7 +297,7 @@ class _IpaSideAppState extends State<IpaSideApp> with WindowListener {
       ],
       child: Consumer<ThemeController>(
         builder: (context, theme, _) => MaterialApp(
-          title: 'iPASide',
+          title: 'EZSide',
           debugShowCheckedModeBanner: false,
           navigatorKey: _navigatorKey,
           theme: buildAppTheme(Brightness.light),

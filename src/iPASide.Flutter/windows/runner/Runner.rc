@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "iPASide Contributors" "\0"
-            VALUE "FileDescription", "iPASide - sideload iOS apps with your Apple ID" "\0"
+            VALUE "CompanyName", "EZSide (based on iPASide by pwnapplehat)" "\0"
+            VALUE "FileDescription", "EZSide - sideload iOS apps with your Apple ID" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "iPASide" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 iPASide Contributors. Free and open-source." "\0"
-            VALUE "OriginalFilename", "iPASide.exe" "\0"
-            VALUE "ProductName", "iPASide" "\0"
+            VALUE "InternalName", "EZSide" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 EZSide (based on iPASide by pwnapplehat, MIT). Free and open-source." "\0"
+            VALUE "OriginalFilename", "EZSide.exe" "\0"
+            VALUE "ProductName", "EZSide" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

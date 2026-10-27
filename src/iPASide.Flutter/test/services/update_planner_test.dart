@@ -5,7 +5,7 @@ import 'package:ipaside/services/update_planner.dart';
 
 String _release({
   String? tag = 'v0.2.0',
-  String? htmlUrl = 'https://github.com/pwnapplehat/iPASide/releases/tag/v0.2.0',
+  String? htmlUrl = 'https://github.com/brooklyn96/EZSide/releases/tag/v0.2.0',
   List<Map<String, String>> assets = const <Map<String, String>>[],
 }) =>
     jsonEncode(<String, Object?>{
@@ -72,7 +72,7 @@ void main() {
     test('finds the installer and the checksum list', () {
       final info = UpdatePlanner.parseRelease(
         _release(assets: <Map<String, String>>[
-          _asset('iPASide-Setup-0.2.0-x64.exe'),
+          _asset('EZSide-Setup-0.2.0-x64.exe'),
           _asset('SHA256SUMS.txt'),
         ]),
       );
@@ -80,29 +80,29 @@ void main() {
       expect(info.tag, 'v0.2.0');
       expect(
         info.htmlUrl,
-        'https://github.com/pwnapplehat/iPASide/releases/tag/v0.2.0',
+        'https://github.com/brooklyn96/EZSide/releases/tag/v0.2.0',
       );
-      expect(info.setupName, 'iPASide-Setup-0.2.0-x64.exe');
-      expect(info.setupUrl, endsWith('iPASide-Setup-0.2.0-x64.exe'));
+      expect(info.setupName, 'EZSide-Setup-0.2.0-x64.exe');
+      expect(info.setupUrl, endsWith('EZSide-Setup-0.2.0-x64.exe'));
       expect(info.sumsUrl, endsWith('SHA256SUMS.txt'));
     });
 
     test('tolerates a release with no html_url', () {
       final info = UpdatePlanner.parseRelease(
         _release(htmlUrl: null, assets: <Map<String, String>>[
-          _asset('iPASide-Setup-0.2.0-x64.exe'),
+          _asset('EZSide-Setup-0.2.0-x64.exe'),
         ]),
       );
 
       expect(info.htmlUrl, isNull);
-      expect(info.setupName, 'iPASide-Setup-0.2.0-x64.exe');
+      expect(info.setupName, 'EZSide-Setup-0.2.0-x64.exe');
     });
 
     test('ignores assets that are neither an installer nor the sums', () {
       final info = UpdatePlanner.parseRelease(
         _release(assets: <Map<String, String>>[
           _asset('release-notes.md'),
-          _asset('iPASide-portable.zip'),
+          _asset('EZSide-portable.zip'),
         ]),
       );
 
@@ -112,8 +112,8 @@ void main() {
 
     test('an arm machine prefers the arm64 installer', () {
       final assets = <Map<String, String>>[
-        _asset('iPASide-Setup-0.2.0-x64.exe'),
-        _asset('iPASide-Setup-0.2.0-arm64-setup.exe'),
+        _asset('EZSide-Setup-0.2.0-x64.exe'),
+        _asset('EZSide-Setup-0.2.0-arm64-setup.exe'),
       ];
 
       expect(
@@ -122,16 +122,16 @@ void main() {
       );
       expect(
         UpdatePlanner.parseRelease(_release(assets: assets), arch: 'x64').setupName,
-        'iPASide-Setup-0.2.0-x64.exe',
+        'EZSide-Setup-0.2.0-x64.exe',
       );
     });
 
     test('an arm machine falls back to the only installer on offer', () {
       final info = UpdatePlanner.parseRelease(
-        _release(assets: <Map<String, String>>[_asset('iPASide-Setup-0.2.0-x64.exe')]),
+        _release(assets: <Map<String, String>>[_asset('EZSide-Setup-0.2.0-x64.exe')]),
         arch: 'arm64',
       );
-      expect(info.setupName, 'iPASide-Setup-0.2.0-x64.exe');
+      expect(info.setupName, 'EZSide-Setup-0.2.0-x64.exe');
     });
 
     test('survives a missing tag, a missing assets array and malformed entries', () {
@@ -206,7 +206,7 @@ $hash  setup.exe
       expect(
         UpdatePlanner.checksumMatches(
           '$hash  setup.exe',
-          r'C:\Users\me\AppData\Local\iPASide\updates\setup.exe',
+          r'C:\Users\me\AppData\Local\EZSide\updates\setup.exe',
           hash,
         ),
         isTrue,

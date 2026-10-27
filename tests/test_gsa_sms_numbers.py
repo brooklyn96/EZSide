@@ -278,7 +278,7 @@ def test_the_trace_records_apples_error_code_and_how_many_numbers_never_the_numb
         "sms/trigger",
         _response(403, {"serviceErrors": [{"code": "-28248", "title": "T", "message": "secret words"}]}),
     )
-    text = (isolated_data / "iPASide" / "gsa-trace.log").read_text(encoding="utf-8")
+    text = (isolated_data / "EZSide" / "gsa-trace.log").read_text(encoding="utf-8")
     assert "auth/numbers http=200 json=trustedPhoneNumbers numbers=1" in text
     assert "sms/trigger http=403 json=serviceErrors svc=-28248" in text
     for private in ("555", "0042", "secret words"):

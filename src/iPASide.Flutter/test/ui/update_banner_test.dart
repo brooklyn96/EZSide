@@ -16,7 +16,7 @@ class _StubUpdateService extends UpdateService {
 
   static const PendingUpdate _staged = PendingUpdate(
     version: '1.2.0',
-    setupPath: r'C:\nowhere\iPASide-Setup-1.2.0-x64.exe',
+    setupPath: r'C:\nowhere\EZSide-Setup-1.2.0-x64.exe',
     sizeBytes: 96 << 20,
   );
 
@@ -25,7 +25,7 @@ class _StubUpdateService extends UpdateService {
         UpdateOutcome.updateAvailable,
         latestVersion: '1.2.0',
         releasePageUrl:
-            'https://github.com/pwnapplehat/iPASide/releases/tag/v1.2.0',
+            'https://github.com/brooklyn96/EZSide/releases/tag/v1.2.0',
       );
 
   @override

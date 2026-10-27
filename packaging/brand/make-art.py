@@ -8,7 +8,7 @@ Sizes come from Inno Setup 6.7's documented image areas:
   backdrop.png   WizardBackImageFile   aspect 497:360, largest area 1630x1148 (250% DPI)
   panel.png      WizardImageFile       aspect 164:314, largest area  534x1022 (250% DPI)
   logo.png       WizardSmallImageFile  square,         largest area  159x159  (250% DPI)
-  bar-track.png  stand-in progress track  (see iPASide.iss)
+  bar-track.png  stand-in progress track  (see EZSide.iss)
   bar-fill.png   stand-in progress fill
 
 Everything is drawn oversized and downsampled, so it stays sharp at 200%+ DPI.
@@ -142,7 +142,7 @@ def build_logo() -> Image.Image:
 
 # The wizard's progress bar is a native TNewProgressBar, which exposes no colour property
 # and is painted the stock green by the style. These two strips are stretched over it
-# instead (see the progress-bar block in iPASide.iss): pixels are the one thing a VCL
+# instead (see the progress-bar block in EZSide.iss): pixels are the one thing a VCL
 # style cannot restyle.
 def build_bar_fill() -> Image.Image:
     return horizontal_gradient((1200, 24), INDIGO, VIOLET)

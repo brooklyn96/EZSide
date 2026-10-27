@@ -8,7 +8,7 @@ import '../platform/single_instance.dart';
 import '../platform/windows_child_process_reaper.dart';
 import 'settings_store.dart';
 
-/// The headless `iPASide --auto-refresh` path run by the OS scheduled task: no
+/// The headless `EZSide --auto-refresh` path run by the OS scheduled task: no
 /// window, no Flutter binding.
 ///
 /// It runs one `refresh` with NEITHER a bundle id nor `--all`, which is how the

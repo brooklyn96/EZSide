@@ -100,7 +100,7 @@ class _PageHeading extends StatelessWidget {
           // Deliberately not a list of the sections: there are seven of them, and
           // a subtitle enumerating them is a table of contents for something
           // already visible — and one more thing to forget to update.
-          Text('How iPASide behaves on this PC.', style: context.t.bodyMuted),
+          Text('How EZSide behaves on this PC.', style: context.t.bodyMuted),
         ],
       );
 }
@@ -203,7 +203,7 @@ class _PairingSection extends StatelessWidget {
           SettingsRow(
             title: 'Remote Pairing',
             description:
-                'Created over USB by iPASide, same as iLoader. EscapeOS needs this on iOS 26.4+; iOS 18 can use the USB-trust half. The phone does not stay plugged in to use the app.',
+                'Created over USB by EZSide, same as iLoader. EscapeOS needs this on iOS 26.4+; iOS 18 can use the USB-trust half. The phone does not stay plugged in to use the app.',
             control: SettingsValue(vm.pairingRemoteText),
           ),
           SettingsRow(
@@ -319,7 +319,7 @@ class _AutoRefreshSection extends StatelessWidget {
             title: 'Enable daily background auto-refresh',
             description:
                 'Re-sign your sideloaded apps before their 7-day free signature '
-                'expires. Windows runs this daily around midday, and iPASide does '
+                'expires. Windows runs this daily around midday, and EZSide does '
                 'not need to be open \u2014 but your iPhone must be plugged in and '
                 'you must still be signed in to your Apple ID. A day the PC was '
                 'off is caught up once it is back on.',
@@ -531,7 +531,7 @@ class _AnisetteSection extends StatelessWidget {
             if (vm.anisetteIsRemote)
               SettingsBlock(
                 child: Text(
-                  'Apple only accepts anisette made by its own macOS libraries, so iPASide '
+                  'Apple only accepts anisette made by its own macOS libraries, so EZSide '
                   'gets it from a public Mac service, as iloader, SideStore and xtool do. '
                   'The service never receives your Apple ID, password, codes or tokens; it '
                   'can see your IP address.',
@@ -660,7 +660,7 @@ class _AboutSection extends StatelessWidget {
   Widget build(BuildContext context) => SettingsSection(
         label: 'ABOUT',
         children: [
-          const SettingsRow(title: 'App', control: SettingsValue('iPASide')),
+          const SettingsRow(title: 'App', control: SettingsValue('EZSide')),
           SettingsRow(
             title: 'Engine',
             control: SettingsValue(vm.engineVersionText),

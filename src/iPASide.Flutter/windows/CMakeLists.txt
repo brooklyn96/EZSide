@@ -5,8 +5,8 @@ project(ipaside LANGUAGES CXX)
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
 # Capitalised so the shipped executable, the installer's shortcuts and the
-# scheduled task's command line all agree on iPASide.exe.
-set(BINARY_NAME "iPASide")
+# scheduled task's command line all agree on EZSide.exe.
+set(BINARY_NAME "EZSide")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
