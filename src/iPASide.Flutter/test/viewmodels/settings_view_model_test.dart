@@ -1037,6 +1037,36 @@ void main() {
       );
     });
 
+    test('exposes why the stored pairing file could not be used', () async {
+      withPhone();
+      runner.results['pairing'] = EngineResult(
+        ok: true,
+        data: <String, dynamic>{
+          'udid': udid,
+          'source': 'none',
+          'error': 'The pairing record at x.plist could not be read: bad',
+        },
+      );
+
+      final SettingsViewModel model = await load();
+
+      expect(model.hasPairingPayload, isFalse);
+      expect(model.pairingStatusError, contains('could not be read'));
+      expect(model.canExportPairing, isFalse);
+    });
+
+    test('has no pairing status error for a readable file', () async {
+      withPhone();
+      runner.results['pairing'] = EngineResult(
+        ok: true,
+        data: pairingPayload(),
+      );
+
+      final SettingsViewModel model = await load();
+
+      expect(model.pairingStatusError, isNull);
+    });
+
     test('import stores the picked file and reloads status', () async {
       withPhone();
       picker.pairingToOpen = r'C:\Users\me\Downloads\pairingFile.plist';

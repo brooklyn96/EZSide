@@ -279,6 +279,10 @@ class SettingsViewModel extends BaseViewModel {
   PairingStatus? get pairing => _pairing;
   bool get isPairingBusy => _isPairingBusy;
   bool get hasPairingError => _pairingError != null;
+
+  /// Why the engine could not build a pairing file (the stored file is
+  /// unreadable, or none exists), or null when it could.
+  String? get pairingStatusError => _pairing?.error;
   bool get hasPairingPayload => _pairing?.hasPayload ?? false;
   bool get canExportPairing => hasPairingPayload && !_isPairingBusy;
   bool get canImportPairing => !_isPairingBusy && _devices.selectedUdid != null;

@@ -567,6 +567,74 @@ void main() {
       );
     });
 
+    test('names the cascaded apps that failed and reloads for the ones that worked', () async {
+      final _FakeRunner runner = _FakeRunner()
+        ..always('installs', _ok(<dynamic>[_record(bundleId: 'com.a')]))
+        ..always(
+          'refresh',
+          _ok(_summary(<Map<String, dynamic>>[
+            _entry('com.a', 'refreshed'),
+            _entry('com.b', 'error', error: 'no device'),
+          ])),
+        );
+      final _FakeDialogs dialogs = _FakeDialogs();
+      final LibraryViewModel vm = await _loaded(runner, dialogs);
+
+      final LibraryRow row = vm.rows.single;
+      await vm.refreshRow(row);
+
+      expect(
+        dialogs.alerts.single,
+        (title: 'Refresh failed', message: 'com.b: no device'),
+      );
+      expect(row.isRefreshing, isFalse);
+      expect(runner.callsTo('installs'), hasLength(2));
+    });
+
+    test('lists every failed entry of a cascaded run', () async {
+      final _FakeRunner runner = _FakeRunner()
+        ..always('installs', _ok(<dynamic>[_record(bundleId: 'com.a')]))
+        ..always(
+          'refresh',
+          _ok(_summary(<Map<String, dynamic>>[
+            _entry('com.a', 'error', error: 'profile expired'),
+            _entry('com.b', 'error', error: 'no device'),
+          ])),
+        );
+      final _FakeDialogs dialogs = _FakeDialogs();
+      final LibraryViewModel vm = await _loaded(runner, dialogs);
+
+      await vm.refreshRow(vm.rows.single);
+
+      expect(dialogs.alerts.single, (
+        title: 'Refresh failed',
+        message: 'com.a: profile expired\ncom.b: no device',
+      ));
+      expect(runner.callsTo('installs'), hasLength(1));
+    });
+
+    test('keeps progress of a cascaded app off the clicked row', () async {
+      final _FakeRunner runner = _FakeRunner()
+        ..always('installs', _ok(<dynamic>[_record(bundleId: 'com.a')]))
+        ..always(
+          'refresh',
+          _ok(_summary(<Map<String, dynamic>>[
+            _entry('com.a', 'refreshed'),
+            _entry('com.b', 'refreshed'),
+          ])),
+        )
+        ..progressOn('refresh', <String>[
+          '{"event":"progress","phase":"install","percent":50,'
+              '"step":"Uploading","bundle_id":"com.b"}',
+        ]);
+      final LibraryViewModel vm = await _loaded(runner, _FakeDialogs());
+
+      final LibraryRow row = vm.rows.single;
+      await vm.refreshRow(row);
+
+      expect(row.progress, const SideloadProgressState());
+    });
+
     test('a busy row leaves its siblings interactive', () async {
       final _FakeRunner runner = _FakeRunner()
         ..always(

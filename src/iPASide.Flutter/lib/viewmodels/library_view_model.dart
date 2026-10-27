@@ -238,17 +238,37 @@ class LibraryViewModel extends BaseViewModel {
         keepSigned: signed.keep,
         signedDirectory: signed.directory,
         connection: _devices.connectionArg,
-        onProgress: (SideloadProgress progress) => _applyProgress(row, progress),
+        // A run for one app can pull in other apps of the same team (a new
+        // certificate revokes the old one). Their frames carry their own bundle
+        // id; showing them on this row would be wrong, and they have no spinner
+        // of their own here, so they are dropped.
+        onProgress: (SideloadProgress progress) {
+          final String? id = progress.bundleId;
+          if (id == null || id == row.bundleId) _applyProgress(row, progress);
+        },
       );
 
-      // A single-app run is reported as `ok` with the real outcome in
-      // refreshed[0], so a failure has to be raised by hand.
-      final RefreshEntry? outcome =
-          summary.refreshed.isEmpty ? null : summary.refreshed.first;
-      if (outcome != null && outcome.status == 'error') {
-        throw EngineException(
-          EngineException.cleanError(outcome.error ?? 'refresh failed'),
+      // A run is reported as `ok` with the real outcomes in `refreshed`, one
+      // entry per app including any cascaded ones, so failures are raised by
+      // hand and every one of them is shown.
+      final List<RefreshEntry> failed = summary.refreshed
+          .where((RefreshEntry entry) => entry.status == 'error')
+          .toList();
+      if (failed.isNotEmpty) {
+        row._isRefreshing = false;
+        // Apps the run did refresh changed the library, so reload for them.
+        if (failed.length < summary.refreshed.length) await _load();
+        notify();
+        await _dialogs.alert(
+          title: 'Refresh failed',
+          message: failed.length == 1 && failed.single.bundleId == row.bundleId
+              ? EngineException.cleanError(failed.single.error ?? 'refresh failed')
+              : failed
+                  .map((RefreshEntry entry) =>
+                      '${entry.bundleId ?? ''}: ${EngineException.cleanError(entry.error ?? 'refresh failed')}')
+                  .join('\n'),
         );
+        return;
       }
 
       await _load(); // the row keeps its spinner until the reload replaces it

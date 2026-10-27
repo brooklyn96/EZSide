@@ -238,7 +238,12 @@ class _PairingSection extends StatelessWidget {
                     text: vm.pairingMessage,
                     isError: vm.isPairingMessageError,
                   )
-                : null,
+                : vm.pairingStatusError != null
+                    ? SettingsStatusLine(
+                        text: vm.pairingStatusError!,
+                        isError: true,
+                      )
+                    : null,
           ),
           if (vm.pairing == null)
             SettingsBlock(
