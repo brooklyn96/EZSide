@@ -256,6 +256,22 @@ def test_signed_ipa_is_named_after_its_source(sideload_harness, tmp_path):
     assert seen["installed"] == signer.output, "the file installed is the one just signed"
 
 
+def test_a_refresh_from_the_cache_is_named_after_each_users_file(sideload_harness, tmp_path):
+    """Every cached copy is called source.ipa; the kept file must not be, or each app
+    refreshed would overwrite the one before."""
+    run, _signer, signed_dir = sideload_harness
+    for name in ("Alpha", "Beta"):
+        cached = tmp_path / "apps" / name / "source.ipa"
+        cached.parent.mkdir(parents=True)
+        cached.write_bytes(b"PK")
+        run(_install_ok, source=cached, source_ipa=str(tmp_path / f"{name}.ipa"),
+            keep_signed=True)
+
+    assert sorted(p.name for p in signed_dir.iterdir()) == [
+        "Alpha_Signed.ipa", "Beta_Signed.ipa"
+    ]
+
+
 def test_resigning_the_same_source_overwrites_its_own_output(sideload_harness):
     run, _signer, signed_dir = sideload_harness
 
@@ -445,7 +461,7 @@ def test_a_recorded_sideload_keeps_its_own_copy_and_certificate_serial(
 
     result = run(_install_ok, record=True)
 
-    cached = isolated_data / "EZSide" / "apps" / "com.example.app.TEAM" / "source.ipa"
+    cached = sideload.refresh.app_dir("com.example.app.TEAM") / "source.ipa"
     assert result["cached_ipa"] == str(cached)
     assert cached.read_bytes() == b"PK", "a byte-for-byte copy of the source"
     stored = sideload.refresh.get("com.example.app.TEAM")
@@ -457,7 +473,7 @@ def test_a_recorded_sideload_keeps_its_own_copy_and_certificate_serial(
 def test_forget_removes_the_cached_copy(sideload_harness, isolated_data):
     run, _signer, _signed_dir = sideload_harness
     run(_install_ok, record=True)
-    folder = isolated_data / "EZSide" / "apps" / "com.example.app.TEAM"
+    folder = sideload.refresh.app_dir("com.example.app.TEAM")
     assert folder.is_dir()
 
     assert sideload.refresh.forget("com.example.app.TEAM") is True

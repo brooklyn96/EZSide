@@ -312,6 +312,38 @@ def test_seeding_failure_is_reported_not_raised(monkeypatch, tmp_path):
     assert result["instructions"], "a manual route must still be offered"
 
 
+def test_a_manual_seed_reads_the_bundle_and_seeds_under_the_engine_lock(monkeypatch, tmp_path):
+    """The bundle's password and the .p12 it names must be read as one pair."""
+    from ipaside_engine import refresh
+
+    monkeypatch.setattr(
+        livecontainer.ipa_module, "inspect",
+        lambda _path: {"bundle_id": BUNDLE_ID, "display_name": "LiveContainer"},
+    )
+    monkeypatch.setattr(livecontainer.signing, "resolve_helper_dylib", lambda: None)
+    monkeypatch.setattr(
+        sideload, "run_sideload",
+        lambda *_a, **_k: {"udid": "UDID", "post_install": {"certificate": {"seeded": True}}},
+    )
+    depth: list[int] = []
+    monkeypatch.setattr(
+        livecontainer.provision, "load_bundle",
+        lambda: depth.append(refresh._lock_depth) or {"p12_password": "pw"},
+    )
+
+    def seed(bundle, udid, automatic=True):
+        depth.append(refresh._lock_depth)
+        return {"seeded": True, "automatic": automatic}
+
+    monkeypatch.setattr(livecontainer, "seed_certificate", seed)
+
+    result = livecontainer.setup(str(tmp_path / "LiveContainer.ipa"), automatic_certificate=False)
+
+    assert depth == [1, 1]
+    assert refresh._lock_depth == 0
+    assert result["certificate"]["automatic"] is False
+
+
 async def _noop() -> None:
     """Stand-in for the awaitable _write_documents returns."""
 

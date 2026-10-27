@@ -16,14 +16,18 @@ profiles last 7 days), so repeat signs don't burn Apple's rate limits.
 from __future__ import annotations
 
 import base64
+import json
+import os
 import secrets
+import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
 from cryptography import x509
 from cryptography.hazmat.primitives import serialization
 
-from . import developer, gsa, paths, secure_store, signing
+from . import developer, gsa, paths, refresh, secure_store, signing
 
 _CERT_CACHE = "certificate.json"
 _BUNDLE_CACHE = "bundle.json"
@@ -45,12 +49,60 @@ def _account_slug(email: str | None) -> str | None:
     return paths.account_slug(email) if email else None
 
 
-def _read_secret(path: Path) -> dict[str, Any]:
-    """Read certificate.json / bundle.json, rewriting a legacy plaintext one protected."""
-    data = secure_store.read_json(path)
-    if not path.read_bytes().startswith(secure_store.MAGIC):
-        secure_store.write_json(path, data)
+def _read_secret(path: Path) -> dict[str, Any] | None:
+    """Read certificate.json / bundle.json; None when it is missing or cannot be read.
+
+    Unreadable most often means DPAPI refuses it: the data folder was copied to another
+    PC or Windows user. That is treated as no file at all - with one line saying so -
+    so the next sideload issues new assets instead of every sideload failing for good.
+    """
+    if not path.exists():
+        return None
+    try:
+        data = secure_store.read_json(path)
+    except (OSError, ValueError) as exc:
+        _note(f"Ignoring {path.name}, which cannot be read on this PC or account ({exc}).")
+        return None
+    if not isinstance(data, dict):
+        _note(f"Ignoring {path.name}, which is damaged.")
+        return None
     return data
+
+
+def _note(message: str) -> None:
+    """One line on the engine's progress channel (stderr; serve forwards it)."""
+    event = {"event": "progress", "phase": "provision", "percent": None, "step": message}
+    print(json.dumps(event), file=sys.stderr, flush=True)
+
+
+def _write_atomic(path: Path, data: bytes) -> None:
+    """Write [data] to a temp file beside [path], then swap it in with one rename."""
+    fd, temp = tempfile.mkstemp(dir=path.parent, prefix=f"{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(data)
+        secure_store.replace_atomic(temp, path)
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)
+        raise
+
+
+def cached_serial(email: str | None) -> str | None:
+    """Serial of the certificate EZSide holds for [email]; None when there is none.
+
+    Local state only, no Apple call: what a refresh compares each app's ``cert_serial``
+    with to find apps signed by a certificate that has since been replaced.
+    """
+    if not email:
+        return None
+    # Not signing_dir(): that creates the folder, and a read should leave none behind.
+    path = paths.data_dir() / "signing" / paths.account_slug(email) / _CERT_CACHE
+    try:
+        data = secure_store.read_json(path) if path.exists() else None
+    except (OSError, ValueError):
+        return None
+    serial = data.get("serial") if isinstance(data, dict) else None
+    return serial or None
 
 
 def load_bundle() -> dict[str, Any]:
@@ -59,12 +111,15 @@ def load_bundle() -> dict[str, Any]:
     Scoped to the active account: a bundle provisioned by a different Apple ID
     names an App ID on a team this session cannot see, and signing with it fails
     in a way that looks like a bug in signing rather than a stale cache.
+
+    Never rewrites the file: that happens only in :func:`ensure_signing_assets`,
+    under the engine lock.
     """
     session = gsa.load_session()
-    path = paths.signing_dir(_account_slug(session.get("email"))) / _BUNDLE_CACHE
-    if not path.exists():
+    bundle = _read_secret(paths.signing_dir(_account_slug(session.get("email"))) / _BUNDLE_CACHE)
+    if bundle is None:
         raise gsa.GsaError("no signing bundle; run 'provision' first")
-    return _read_secret(path)
+    return bundle
 
 
 def team_scoped_bundle_id(base_bundle_id: str) -> str:
@@ -119,26 +174,37 @@ def _find_cert_for_key(certs: list[dict[str, Any]], key_pem: bytes) -> tuple[byt
     return None, None
 
 
-def _ensure_certificate(team_id: str, account_slug: str | None) -> tuple[bytes, bytes, str]:
-    """Return (private_key_pem, certificate_der, serial), creating one if needed.
+def _ensure_certificate(
+    team_id: str, account_slug: str | None
+) -> tuple[bytes, bytes, str, str]:
+    """Return (private_key_pem, certificate_der, serial, p12_password), creating one if needed.
 
     The key cache is per account. Shared, a second Apple ID would find the first
     one's key, fail to match it against its own team's certificates, and respond by
     revoking a certificate — breaking every app that had signed.
+
+    The identity.p12 password is made once per certificate issued and kept with it, so
+    rebuilding the .p12 for the same certificate never changes it. A legacy cache (plain
+    text, or from before the password lived here) is rewritten protected, with one.
 
     Re-issuing only ever revokes a certificate iPASide itself registered; see
     :data:`CERTIFICATE_MACHINE_NAME`.
     """
     cache_path = paths.signing_dir(account_slug) / _CERT_CACHE
     server_certs = developer.list_certificates(team_id)
-    if cache_path.exists():
-        cached = _read_secret(cache_path)
+    cached = _read_secret(cache_path)
+    if cached is not None:
         serial = cached.get("serial")
         if any(c.get("serialNumber") == serial for c in server_certs):
+            password = cached.get("p12_password")
+            if not password or not cache_path.read_bytes().startswith(secure_store.MAGIC):
+                password = password or secrets.token_urlsafe(24)
+                secure_store.write_json(cache_path, {**cached, "p12_password": password})
             return (
                 base64.b64decode(cached["key_pem"]),
                 base64.b64decode(cached["cert_der"]),
                 serial,
+                password,
             )
 
     # We need to issue a new certificate, and the account has limited room for them, so
@@ -177,15 +243,17 @@ def _ensure_certificate(team_id: str, account_slug: str | None) -> tuple[bytes, 
     if cert_der is None:
         raise gsa.GsaError("could not obtain certificate content from Apple")
 
+    password = secrets.token_urlsafe(24)
     secure_store.write_json(
         cache_path,
         {
             "serial": serial,
             "key_pem": base64.b64encode(key_pem).decode(),
             "cert_der": base64.b64encode(cert_der).decode(),
+            "p12_password": password,
         },
     )
-    return key_pem, cert_der, serial
+    return key_pem, cert_der, serial, password
 
 
 def _ensure_device(team_id: str, udid: str, name: str) -> None:
@@ -247,6 +315,7 @@ def _ensure_app_groups(
     return group_ids
 
 
+@refresh.operation_lock()
 def ensure_signing_assets(
     bundle_id: str,
     udid: str,
@@ -260,6 +329,9 @@ def ensure_signing_assets(
     ``app_groups`` names ``group.…`` identifiers to attach to the App ID. Ordinary
     sideloads do not need any; LiveContainer does, because a shared container is how
     it reaches the certificate it signs guest apps with.
+
+    Runs under :func:`refresh.operation_lock`: it writes the signing folder, which the
+    other engine process may be signing from.
     """
     step = on_step or (lambda _m: None)
     step("Contacting Apple\u2026")
@@ -273,7 +345,7 @@ def ensure_signing_assets(
         gsa.remember_team(account, team_id)
 
     step("Preparing signing certificate\u2026")
-    key_pem, cert_der, serial = _ensure_certificate(team_id, _account_slug(account))
+    key_pem, cert_der, serial, p12_password = _ensure_certificate(team_id, _account_slug(account))
     step("Registering your device\u2026")
     _ensure_device(team_id, udid, device_name)
     step("Creating the App ID\u2026")
@@ -294,11 +366,11 @@ def ensure_signing_assets(
     signing_dir = paths.signing_dir(_account_slug(account))
     p12_path = signing_dir / _IDENTITY_P12
     profile_path = signing_dir / _PROFILE
-    # A fresh random password for every identity file written, kept only in the
-    # protected bundle.json; the .p12 itself stays a plain PKCS#12 because zsign reads it.
-    p12_password = secrets.token_urlsafe(24)
-    p12_path.write_bytes(signing.build_p12(cert_der, key_pem, p12_password))
-    profile_path.write_bytes(bytes(profile_data))
+    # The certificate's own password (see _ensure_certificate), kept only in the protected
+    # JSON files; the .p12 itself stays a plain PKCS#12 because zsign reads it. Each file
+    # is swapped in whole, the .p12 before the bundle.json that names its password.
+    _write_atomic(p12_path, signing.build_p12(cert_der, key_pem, p12_password))
+    _write_atomic(profile_path, bytes(profile_data))
 
     bundle = {
         "team_id": team_id,

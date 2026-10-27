@@ -297,30 +297,32 @@ async def _install_profile_async(profile: bytes, serial: str | None) -> str:
     try:
         misagent = MisagentService(lockdown=client)
         try:
-            # AltServer's rule: remove older versions of the profile about to be
-            # installed - same team, same app - so they do not pile up. Another team's
-            # profiles, and this team's for other apps, are never touched.
-            for installed in await misagent.copy_all():
-                old = installed.plist
+            await misagent.install(io.BytesIO(profile))
+            listed = [p.plist for p in await misagent.copy_all()]
+            # Only once the new profile is listed: until then the old one is all that
+            # keeps the app launching, so a refused install must leave it in place.
+            if uuid not in {p.get("UUID") for p in listed}:
+                raise ProfileInstallError(
+                    f"The device accepted provisioning profile {uuid} but does not list it."
+                )
+            # AltServer's rule: remove older versions of the profile just installed -
+            # same team, same app - so they do not pile up. Another team's profiles,
+            # and this team's for other apps, are never touched.
+            for old in listed:
                 if old.get("UUID") != uuid and _profile_key(old) == (team, app_identifier):
                     await misagent.remove(old["UUID"])
-            await misagent.install(io.BytesIO(profile))
-            present = {p.plist.get("UUID") for p in await misagent.copy_all()}
         finally:
             await maybe_await(misagent.close())
     finally:
         await lockdown.close(client)
-    if uuid not in present:
-        raise ProfileInstallError(
-            f"The device accepted provisioning profile {uuid} but does not list it."
-        )
     return uuid
 
 
 def install_profile(profile: bytes, serial: str | None = None) -> str:
     """Install a provisioning profile on the device and return its UUID.
 
-    Replaces older profiles for the same app on the same team, then checks the new one
-    is listed. Raises when the device refuses it or does not list it afterwards.
+    Installs it, checks it is listed, and only then removes older profiles for the same
+    app on the same team. Raises when the device refuses it or does not list it
+    afterwards; the old profiles are then still installed.
     """
     return run(_install_profile_async(profile, serial))

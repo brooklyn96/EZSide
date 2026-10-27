@@ -1110,13 +1110,18 @@ def _remove_signing_material(slug: str) -> None:
 
     Nothing is revoked at Apple; the certificate simply can no longer be used from here.
     """
+    # Under the engine lock: a sideload or refresh in the other process may be signing
+    # from this folder. Imported here, as refresh is a higher layer than gsa.
+    from . import refresh
+
     folder = paths.data_dir() / "signing" / slug
-    try:
-        shutil.rmtree(folder)
-    except FileNotFoundError:
-        pass
-    except OSError as exc:
-        raise GsaError(f"could not delete the signing key folder {folder}: {exc}") from exc
+    with refresh.operation_lock():
+        try:
+            shutil.rmtree(folder)
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            raise GsaError(f"could not delete the signing key folder {folder}: {exc}") from exc
 
 
 def logout(email: str | None = None) -> dict[str, Any]:

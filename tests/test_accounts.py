@@ -114,6 +114,25 @@ def test_signing_out_with_no_address_removes_everything():
     assert not gsa.status()["authenticated"]
 
 
+def test_signing_out_removes_the_signing_folder_under_the_engine_lock(monkeypatch):
+    """The other engine process may be signing from that folder."""
+    from ipaside_engine import refresh
+
+    sign_in(ONE)
+    folder = paths.signing_dir(paths.account_slug(ONE))
+    depth: list[int] = []
+    real = gsa.shutil.rmtree
+    monkeypatch.setattr(
+        gsa.shutil, "rmtree", lambda path: depth.append(refresh._lock_depth) or real(path)
+    )
+
+    gsa.logout(ONE)
+
+    assert depth == [1]
+    assert not folder.exists()
+    assert refresh._lock_depth == 0, "and released"
+
+
 def test_signing_out_an_unknown_account_says_so():
     sign_in(ONE)
     with pytest.raises(gsa.GsaError, match="not signed in"):

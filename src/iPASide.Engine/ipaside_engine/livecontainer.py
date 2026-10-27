@@ -35,7 +35,7 @@ from typing import Any, Callable
 
 import requests
 
-from . import apps, ipa as ipa_module, lockdown, provision, signing
+from . import apps, ipa as ipa_module, lockdown, provision, refresh, signing
 from .errors import EngineError
 
 #: LiveContainer's own identifier; the team id is appended for a free account.
@@ -602,9 +602,12 @@ def setup(
     outcome = result.get("post_install") or {}
     certificate = outcome.get("certificate", outcome)
     if not automatic_certificate and certificate.get("seeded"):
-        certificate = seed_certificate(
-            provision.load_bundle(), result.get("udid"), automatic=False
-        )
+        # Locked, so the bundle's password and the .p12 it names are one pair even if
+        # the other engine process re-issues the certificate meanwhile.
+        with refresh.operation_lock():
+            certificate = seed_certificate(
+                provision.load_bundle(), result.get("udid"), automatic=False
+            )
 
     return {
         **result,

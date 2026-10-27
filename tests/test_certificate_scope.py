@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import json
+from pathlib import Path
 
 import pytest
 
@@ -157,13 +158,16 @@ def test_a_cached_certificate_that_apple_still_lists_is_reused(portal, tmp_path)
     )
     fake = portal([OURS, SIDESTORE, XCODE])
 
-    _key, _der, serial = provision._ensure_certificate(TEAM, None)
+    _key, _der, serial, password = provision._ensure_certificate(TEAM, None)
 
     assert serial == OURS["serialNumber"]
     assert fake.revoked == []
     assert fake.machine_names == []
     raw = (tmp_path / "certificate.json").read_bytes()
     assert raw.startswith(secure_store.MAGIC), "a plaintext cache is rewritten protected"
+    assert len(password) >= 32, "a legacy cache gets the certificate's own password"
+    assert secure_store.read_json(tmp_path / "certificate.json")["p12_password"] == password
+    assert provision._ensure_certificate(TEAM, None)[3] == password, "and keeps it"
 
 
 # --------------------------------------------------------------------------- #
@@ -199,7 +203,7 @@ def test_a_failed_revocation_alone_does_not_stop_a_working_request(portal):
     """The certificate may simply already be gone; the request is the real test."""
     fake = portal([OURS], revoke_error=developer.DeveloperServicesError("already revoked"))
 
-    _key, _der, serial = provision._ensure_certificate(TEAM, None)
+    _key, _der, serial, _password = provision._ensure_certificate(TEAM, None)
 
     assert serial == "NEWLYISSUED0001"
     assert fake.machine_names == [provision.CERTIFICATE_MACHINE_NAME]
@@ -218,6 +222,57 @@ def test_a_new_certificate_is_cached_protected(portal, tmp_path):
     assert secure_store.read_json(path)["serial"] == "NEWLYISSUED0001"
 
 
+def test_a_new_certificate_gets_its_own_password(portal, tmp_path):
+    portal([])
+
+    *_rest, first = provision._ensure_certificate(TEAM, None)
+    *_rest, again = provision._ensure_certificate(TEAM, None)
+
+    assert len(first) >= 32 and first != signing.P12_PASSWORD
+    assert again == first, "one password per certificate issued, not per write"
+    assert secure_store.read_json(tmp_path / "certificate.json")["p12_password"] == first
+
+
+def _unreadable(monkeypatch, path):
+    """A protected file DPAPI refuses: the data folder was copied to another PC or user."""
+    path.write_bytes(secure_store.MAGIC + b"blob from another machine")
+
+    def refuse(_blob):
+        raise OSError("Key not valid for use in specified state")
+
+    monkeypatch.setattr(secure_store, "unprotect", refuse)
+
+
+def test_an_unreadable_certificate_cache_is_treated_as_missing(portal, tmp_path, monkeypatch, capsys):
+    fake = portal([OURS])
+    _unreadable(monkeypatch, tmp_path / "certificate.json")
+    monkeypatch.setattr(secure_store, "protect", lambda data: data)
+
+    _key, _der, serial, _password = provision._ensure_certificate(TEAM, None)
+
+    assert serial == "NEWLYISSUED0001", "a new certificate is issued, as on first use"
+    assert fake.revoked == [OURS["serialNumber"]], "only our own old one makes room"
+    lines = [line for line in capsys.readouterr().err.splitlines() if line]
+    assert len(lines) == 1 and "certificate.json" in lines[0], "one line says why"
+
+
+@pytest.mark.parametrize("content", ["not json", "[1, 2]"])
+def test_a_damaged_certificate_cache_is_treated_as_missing(portal, tmp_path, content):
+    portal([OURS])
+    (tmp_path / "certificate.json").write_text(content, encoding="utf-8")
+
+    assert provision._ensure_certificate(TEAM, None)[2] == "NEWLYISSUED0001"
+
+
+def test_an_unreadable_bundle_is_reported_as_no_bundle(monkeypatch, tmp_path):
+    monkeypatch.setattr(paths, "signing_dir", lambda _slug=None: tmp_path)
+    monkeypatch.setattr(gsa, "load_session", lambda *a, **k: {"email": None})
+    _unreadable(monkeypatch, tmp_path / "bundle.json")
+
+    with pytest.raises(gsa.GsaError, match="no signing bundle"):
+        provision.load_bundle()
+
+
 @pytest.fixture
 def provisioning(monkeypatch, tmp_path):
     """ensure_signing_assets with Apple stubbed; returns the passwords build_p12 saw."""
@@ -225,7 +280,9 @@ def provisioning(monkeypatch, tmp_path):
     monkeypatch.setattr(paths, "signing_dir", lambda _slug=None: tmp_path)
     monkeypatch.setattr(gsa, "load_session", lambda *a, **k: {"email": None})
     monkeypatch.setattr(developer, "list_teams", lambda: [{"teamId": TEAM, "name": "T"}])
-    monkeypatch.setattr(provision, "_ensure_certificate", lambda *_a: (b"key", b"der", "S1"))
+    monkeypatch.setattr(
+        provision, "_ensure_certificate", lambda *_a: (b"key", b"der", "S1", "PASSWORD-OF-S1")
+    )
     monkeypatch.setattr(provision, "_ensure_device", lambda *_a: None)
     monkeypatch.setattr(provision, "_ensure_app_id", lambda *_a: {"appIdId": "APPID"})
     monkeypatch.setattr(
@@ -237,28 +294,60 @@ def provisioning(monkeypatch, tmp_path):
     return seen
 
 
-def test_each_identity_gets_a_random_password_kept_only_in_the_protected_bundle(
+def test_the_identity_uses_its_certificates_password_kept_only_in_the_protected_bundle(
     provisioning, tmp_path
 ):
     first = provision.ensure_signing_assets("com.a", "UDID")
     second = provision.ensure_signing_assets("com.a", "UDID")
 
-    assert provisioning == [first["p12_password"], second["p12_password"]]
-    assert first["p12_password"] != second["p12_password"]
-    assert len(first["p12_password"]) >= 32
-    assert first["p12_password"] != signing.P12_PASSWORD, "not the public constant"
+    assert provisioning == ["PASSWORD-OF-S1", "PASSWORD-OF-S1"], "not one per write"
+    assert first["p12_password"] == second["p12_password"] == "PASSWORD-OF-S1"
     raw = (tmp_path / "bundle.json").read_bytes()
     assert raw.startswith(secure_store.MAGIC)
     assert secure_store.read_json(tmp_path / "bundle.json") == second
     assert provision.load_bundle() == second
 
 
-def test_a_legacy_plaintext_bundle_is_read_and_rewritten_protected(monkeypatch, tmp_path):
+def test_the_identity_is_swapped_in_whole_before_the_bundle_naming_its_password(
+    provisioning, tmp_path, monkeypatch
+):
+    swapped: list[str] = []
+    real = secure_store.replace_atomic
+
+    def record(src, dst):
+        swapped.append(Path(dst).name)
+        real(src, dst)
+
+    monkeypatch.setattr(secure_store, "replace_atomic", record)
+
+    provision.ensure_signing_assets("com.a", "UDID")
+
+    assert swapped == ["identity.p12", "profile.mobileprovision", "bundle.json"]
+    assert (tmp_path / "identity.p12").read_bytes() == b"p12"
+    assert not list(tmp_path.glob("*.tmp")), "no temp file left behind"
+
+
+def test_provisioning_holds_the_engine_lock(provisioning, monkeypatch):
+    from ipaside_engine import refresh
+
+    depth: list[int] = []
+    monkeypatch.setattr(
+        provision, "_ensure_device", lambda *_a: depth.append(refresh._lock_depth)
+    )
+
+    provision.ensure_signing_assets("com.a", "UDID")
+
+    assert depth == [1], "it writes the signing folder another process may sign from"
+
+
+def test_a_legacy_plaintext_bundle_is_read_but_not_rewritten_outside_the_lock(
+    monkeypatch, tmp_path
+):
+    """Only ensure_signing_assets, under the lock, writes bundle.json."""
     monkeypatch.setattr(paths, "signing_dir", lambda _slug=None: tmp_path)
     monkeypatch.setattr(gsa, "load_session", lambda *a, **k: {"email": None})
     legacy = {"team_id": TEAM, "p12_password": "iPASide"}
     (tmp_path / "bundle.json").write_text(json.dumps(legacy), encoding="utf-8")
 
     assert provision.load_bundle() == legacy
-    assert (tmp_path / "bundle.json").read_bytes().startswith(secure_store.MAGIC)
-    assert provision.load_bundle() == legacy
+    assert not (tmp_path / "bundle.json").read_bytes().startswith(secure_store.MAGIC)

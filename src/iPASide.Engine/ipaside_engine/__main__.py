@@ -223,7 +223,10 @@ def _cmd_app_icons(args: argparse.Namespace) -> int:
 
 
 def _cmd_uninstall(args: argparse.Namespace) -> int:
-    apps.uninstall(args.bundle_id, args.udid)
+    # Locked, so a refresh running in the other process cannot find the app gone
+    # halfway through and reinstall it.
+    with refresh.operation_lock():
+        apps.uninstall(args.bundle_id, args.udid)
     if args.json:
         _emit(args, {"ok": True, "uninstalled": args.bundle_id})
     else:
@@ -352,18 +355,21 @@ def _cmd_provision(args: argparse.Namespace) -> int:
 
 def _cmd_sign(args: argparse.Namespace) -> int:
     try:
-        bundle = provision.load_bundle()
-        result = signing.sign_ipa(
-            args.ipa,
-            args.output,
-            p12_path=bundle["p12_path"],
-            p12_password=bundle["p12_password"],
-            profile_path=bundle["profile_path"],
-            bundle_id=args.bundle_id or bundle["bundle_id"],
-            remove_extensions=args.remove_extensions,
-            remove_uisd=args.remove_device_restrictions,
-            legacy_sha1=args.legacy_sha1,
-        )
+        # Locked, so the bundle's password and the .p12 it names are read as one pair
+        # even while the other process re-provisions.
+        with refresh.operation_lock():
+            bundle = provision.load_bundle()
+            result = signing.sign_ipa(
+                args.ipa,
+                args.output,
+                p12_path=bundle["p12_path"],
+                p12_password=bundle["p12_password"],
+                profile_path=bundle["profile_path"],
+                bundle_id=args.bundle_id or bundle["bundle_id"],
+                remove_extensions=args.remove_extensions,
+                remove_uisd=args.remove_device_restrictions,
+                legacy_sha1=args.legacy_sha1,
+            )
     except (gsa.GsaError, signing.SigningError) as exc:
         if args.json:
             _emit(args, {"status": "error", "error": str(exc)})
@@ -571,22 +577,42 @@ def _cmd_installs(args: argparse.Namespace) -> int:
 EXIT_PARTIAL_FAILURE = 2
 
 
-def _stale_team_records(
-    team_id: str | None, serial: str, changed: bool, done: set[str]
-) -> list[dict[str, Any]]:
-    """Records of ``team_id`` that ``serial`` did not sign, so they must be re-signed now.
+def _team_serials() -> dict[str, str | None]:
+    """team id -> serial of the certificate EZSide holds for it now, for every recorded team.
+
+    Read from the local certificate cache of the account that provisions under the team
+    (no Apple call); None when no signed-in account is known for it, or it has none.
+    """
+    serials: dict[str, str | None] = {}
+    for team_id in {r.get("team_id") for r in refresh.records()} - {None, ""}:
+        account = gsa.account_for_team(team_id)
+        serials[team_id] = provision.cached_serial(account) if account else None
+    return serials
+
+
+def _stale_records(
+    teams: set[str] | None, start: dict[str, str | None]
+) -> list[tuple[dict[str, Any], str]]:
+    """``(record, current serial)`` for each record its team's current certificate did not sign.
 
     A record that names another serial was signed by a certificate that is gone. One
-    without a serial (an older record) is included only when the certificate changed in
-    this run, because then whatever signed it has just been revoked.
+    without a serial (an older record) is included only when the team's certificate
+    changed in this run (``start`` is how it began), because then whatever signed it has
+    just been revoked. ``teams`` limits the look to those teams; None means every team.
     """
-    if not team_id:
-        return []
-    return [
-        r for r in refresh.records()
-        if r.get("team_id") == team_id and r["bundle_id"] not in done
-        and r.get("cert_serial") != serial and (changed or r.get("cert_serial"))
-    ]
+    now = _team_serials()
+    stale = []
+    for r in refresh.records():
+        team_id = r.get("team_id")
+        serial = now.get(team_id) if team_id else None
+        if not serial or (teams is not None and team_id not in teams):
+            continue
+        if r.get("cert_serial") == serial:
+            continue
+        if not r.get("cert_serial") and start.get(team_id) == serial:
+            continue
+        stale.append((r, serial))
+    return stale
 
 
 def _cmd_refresh(args: argparse.Namespace) -> int:
@@ -603,40 +629,45 @@ def _cmd_refresh(args: argparse.Namespace) -> int:
             targets = refresh.due(args.within)
 
         # A new certificate revokes the old one, and with it every app it signed, due or
-        # not. So when one refresh reveals the team's current certificate, every record
-        # of that team signed by another one joins this run.
-        results: list[dict[str, Any]] = []
-        done: set[str] = set()
-        queue = list(targets)
-        while queue:
-            entry = queue.pop(0)
-            if entry["bundle_id"] in done:
-                continue
-            done.add(entry["bundle_id"])
-            try:
-                res = sideload.refresh_record(
-                    entry,
-                    on_progress=_progress_to_stderr(entry["bundle_id"]),
-                    keep_signed=args.keep_signed,
-                    signed_dir=args.signed_dir,
-                    resign=args.resign,
-                )
-                results.append({
-                    "bundle_id": entry["bundle_id"],
-                    "status": "installed",
-                    "expires_at": res.get("expires_at"),
-                    "refresh_mode": res.get("refresh_mode"),
-                })
-            except Exception as exc:  # keep going; report per-app outcome
-                results.append(
-                    {"bundle_id": entry["bundle_id"], "status": "error", "error": str(exc)}
-                )
-                continue
-            serial = res.get("cert_serial")
-            if serial:
-                changed = bool(entry.get("cert_serial")) and entry["cert_serial"] != serial
-                queue.extend(_stale_team_records(entry.get("team_id"), serial, changed, done))
+        # not. So after each round the run looks again, from the local certificate cache,
+        # for records the team's current certificate did not sign - including ones this
+        # run already refreshed on an older one, and including when the refresh that
+        # issued the new certificate then failed - and re-signs them too. A run for one
+        # app looks only at its own team; any other run at every team.
+        teams = {t.get("team_id") for t in targets} if args.bundle_id else None
+        start = _team_serials()
+        by_app: dict[str, dict[str, Any]] = {}  # one entry per app, latest outcome
+        attempted: set[tuple[str, str | None]] = set()  # (bundle id, serial it was for)
+        failed: set[str] = set()
+        batch: list[tuple[dict[str, Any], str | None]] = [(t, None) for t in targets]
+        while True:
+            for entry, serial in batch:
+                attempted.add((entry["bundle_id"], serial))
+                try:
+                    res = sideload.refresh_record(
+                        entry,
+                        on_progress=_progress_to_stderr(entry["bundle_id"]),
+                        keep_signed=args.keep_signed,
+                        signed_dir=args.signed_dir,
+                        # A stale app is re-signed: its certificate is gone.
+                        resign=args.resign or serial is not None,
+                    )
+                    outcome = {"status": "installed", "expires_at": res.get("expires_at"),
+                               "refresh_mode": res.get("refresh_mode"), "error": None}
+                except Exception as exc:  # keep going; report per-app outcome
+                    failed.add(entry["bundle_id"])
+                    outcome = {"status": "error", "refresh_mode": None, "error": str(exc)}
+                by_app[entry["bundle_id"]] = {"bundle_id": entry["bundle_id"], **outcome}
+            # A failed app is not retried in the same run; a new (app, serial) pair at
+            # most once, so the loop ends.
+            batch = [
+                (r, s) for r, s in _stale_records(teams, start)
+                if r["bundle_id"] not in failed and (r["bundle_id"], s) not in attempted
+            ]
+            if not batch:
+                break
 
+    results = list(by_app.values())
     summary = {"status": "done", "count": len(results), "refreshed": results}
     if args.json:
         _emit(args, summary)
@@ -1025,8 +1056,10 @@ def _run_request(request: dict[str, Any], write_frame: Any) -> None:
         sys.stdout = out_buffer
         sys.stderr = _ProgressWriter(write_frame, request_id)
         # A partial refresh failure still produced a complete result; the app reads the
-        # per-app statuses in it, so it is not a failed request.
-        ok = (dispatch(namespace) or 0) in (0, EXIT_PARTIAL_FAILURE)
+        # per-app statuses in it, so it is not a failed request. Exit 2 from any other
+        # command (login without credentials, provision without a device) is a failure.
+        code = dispatch(namespace) or 0
+        ok = code == 0 or (namespace.command == "refresh" and code == EXIT_PARTIAL_FAILURE)
         text = out_buffer.getvalue().strip()
         if text:
             try:

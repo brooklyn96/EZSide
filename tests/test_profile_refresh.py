@@ -174,13 +174,54 @@ def test_the_users_file_is_used_when_the_cached_copy_is_gone(entry, device, tmp_
     assert device["resigned"][0]["ipa"] == entry["source_ipa"]
 
 
+def test_a_profile_only_refresh_needs_no_ipa(entry, device, tmp_path):
+    (tmp_path / "cache" / "source.ipa").unlink()
+    (tmp_path / "Example.ipa").unlink()
+
+    assert sideload.refresh_record(entry)["refresh_mode"] == "profile"
+
+
 def test_no_ipa_anywhere_is_a_sentence(entry, device, tmp_path):
     (tmp_path / "cache" / "source.ipa").unlink()
     (tmp_path / "Example.ipa").unlink()
+    device["serial"] = "SERIAL2"  # only a re-sign can refresh it
 
     with pytest.raises(ipa_module.IpaError, match="moved, renamed or deleted"):
         sideload.refresh_record(entry)
     assert device["resigned"] == [] and device["profiles"] == []
+
+
+def test_a_refresh_that_can_only_resign_fails_on_a_missing_ipa_before_any_round_trip(
+    entry, device, tmp_path, monkeypatch
+):
+    (tmp_path / "cache" / "source.ipa").unlink()
+    (tmp_path / "Example.ipa").unlink()
+    asked: list[dict] = []
+    monkeypatch.setattr(sideload, "_refresh_account", lambda e: asked.append(e))
+
+    with pytest.raises(ipa_module.IpaError):
+        sideload.refresh_record(entry, resign=True)
+    assert asked == [], "the account (an Apple round trip) is not looked up"
+
+
+@pytest.mark.parametrize("cause, reason", [
+    ("missing", "not on the device"),
+    ("serial", "certificate has changed"),
+    ("refused", "refused the profile (device said no)"),
+])
+def test_falling_back_to_resign_says_why(entry, device, cause, reason):
+    if cause == "missing":
+        device["installed"] = {}
+    elif cause == "serial":
+        device["serial"] = "SERIAL2"
+    else:
+        device["profile_error"] = apps.ProfileInstallError("device said no")
+    lines: list[str] = []
+
+    sideload.refresh_record(entry, on_progress=lambda _phase, _pct, step: lines.append(step))
+
+    said = [line for line in lines if line.startswith("Re-signing the app")]
+    assert len(said) == 1 and reason in said[0]
 
 
 # --------------------------------------------------------------------------- #
@@ -192,6 +233,7 @@ class _Misagent:
         self.removed: list[str] = []
         self.lists_new = lists_new
         self.closed = False
+        self.events: list[str] = []
 
     def __call__(self, lockdown):
         return self
@@ -203,10 +245,12 @@ class _Misagent:
 
     async def remove(self, uuid):
         self.removed.append(uuid)
+        self.events.append(f"remove {uuid}")
         self.installed = [p for p in self.installed if plistlib.loads(
             p[p.find(b"<?xml"):p.find(b"</plist>") + 8])["UUID"] != uuid]
 
     async def install(self, stream: io.BytesIO):
+        self.events.append("install")
         if self.lists_new:
             self.installed.append(stream.read())
 
@@ -253,6 +297,25 @@ def test_a_profile_the_device_does_not_list_afterwards_is_an_error(misagent):
         apps.install_profile(_profile("NEW-UUID"), "UDID")
 
 
+def test_the_new_profile_is_installed_and_listed_before_old_ones_go(misagent):
+    fake = misagent([_profile("OLD-SAME-APP")])
+
+    apps.install_profile(_profile("NEW-UUID"), "UDID")
+
+    assert fake.events == ["install", "remove OLD-SAME-APP"]
+
+
+def test_a_refused_profile_leaves_the_old_one_installed(misagent):
+    """Until the new one is listed, the old one is all that keeps the app launching."""
+    fake = misagent([_profile("OLD-SAME-APP")], lists_new=False)
+
+    with pytest.raises(apps.ProfileInstallError):
+        apps.install_profile(_profile("NEW-UUID"), "UDID")
+
+    assert fake.removed == []
+    assert fake.closed
+
+
 def test_bytes_that_are_not_a_profile_are_refused_before_touching_the_device(misagent):
     fake = misagent([_profile("OLD-SAME-APP")])
 
@@ -276,13 +339,27 @@ def _rec(bundle_id, team, serial, days):
 
 
 @pytest.fixture
-def refresher(monkeypatch):
-    """Fake refresh_record: the team's certificate is now SERIAL2; it records that."""
+def certs(monkeypatch):
+    """team id -> the serial in that team's local certificate cache (its account is the team)."""
+    held = {TEAM: "SERIAL1"}
+    monkeypatch.setattr(cli.gsa, "account_for_team", lambda team_id: team_id)
+    monkeypatch.setattr(cli.provision, "cached_serial", lambda account: held.get(account))
+    return held
+
+
+@pytest.fixture
+def refresher(monkeypatch, certs):
+    """Fake refresh_record: the team's certificate is now SERIAL2 (issued, then cached).
+
+    An app in ``failing`` fails after the new certificate was issued, as an install that
+    fails after provisioning does.
+    """
     calls: list[str] = []
     failing: set[str] = set()
 
     def fake(entry, on_progress=None, **kwargs):
         calls.append(entry["bundle_id"])
+        certs[entry["team_id"]] = "SERIAL2"
         if entry["bundle_id"] in failing:
             raise sideload.SideloadError("device not reachable")
         stored = {k: v for k, v in entry.items() if k not in ("days_left", "expired")}
@@ -316,9 +393,10 @@ def test_a_reissued_certificate_resigns_every_app_of_that_team(refresher, capsys
     assert all(r["refresh_mode"] == "resign" for r in summary["refreshed"])
 
 
-def test_a_record_signed_by_an_older_certificate_joins_the_run(refresher, capsys):
+def test_a_record_signed_by_an_older_certificate_joins_the_run(refresher, certs, capsys):
     """No change in this run, but a record still names a certificate that is gone."""
     calls, _failing = refresher
+    certs[TEAM] = "SERIAL2"
     _seed(_rec("due", TEAM, "SERIAL2", 1), _rec("stale", TEAM, "SERIAL1", 6))
 
     _refresh(capsys)
@@ -326,8 +404,9 @@ def test_a_record_signed_by_an_older_certificate_joins_the_run(refresher, capsys
     assert sorted(calls) == ["due", "stale"]
 
 
-def test_an_older_record_is_left_alone_when_nothing_changed(refresher, capsys):
+def test_an_older_record_is_left_alone_when_nothing_changed(refresher, certs, capsys):
     calls, _failing = refresher
+    certs[TEAM] = "SERIAL2"
     _seed(_rec("due", TEAM, "SERIAL2", 1), _rec("legacy", TEAM, None, 6))
 
     _refresh(capsys)
@@ -350,7 +429,8 @@ def test_one_unreachable_app_fails_the_run_and_the_rest_continue(refresher, caps
     assert by_id["third"]["status"] == "installed"
 
 
-def test_all_succeeding_exits_zero(refresher, capsys):
+def test_all_succeeding_exits_zero(refresher, certs, capsys):
+    certs[TEAM] = "SERIAL2"
     _seed(_rec("due", TEAM, "SERIAL2", 1))
 
     code, summary = _refresh(capsys)
@@ -385,3 +465,96 @@ def test_resign_is_passed_through(monkeypatch, capsys):
     _refresh(capsys, "--resign")
 
     assert seen["resign"] is True
+
+
+def test_a_stale_record_is_resigned_when_nothing_is_due(refresher, certs, capsys):
+    """The scheduled run: nothing due, but an app still names a replaced certificate."""
+    calls, _failing = refresher
+    certs[TEAM] = "SERIAL2"  # issued by a sideload, or a run whose cascade failed
+    _seed(_rec("stale", TEAM, "SERIAL1", 5), _rec("current", TEAM, "SERIAL2", 5))
+
+    code, summary = _refresh(capsys)
+
+    assert code == 0
+    assert calls == ["stale"], "the app the current certificate signed is left alone"
+    assert summary["refreshed"][0]["refresh_mode"] == "resign"
+
+
+def test_a_signed_out_teams_records_are_left_alone(refresher, certs, capsys):
+    calls, _failing = refresher
+    certs.clear()  # no account, or no certificate cache, for the team
+    _seed(_rec("stale", TEAM, "SERIAL1", 5))
+
+    _refresh(capsys)
+
+    assert calls == []
+
+
+def test_a_reissue_whose_own_install_then_fails_still_resigns_the_team(refresher, capsys):
+    calls, failing = refresher
+    failing.add("due")
+    _seed(_rec("due", TEAM, "SERIAL1", 1), _rec("later", TEAM, "SERIAL1", 6))
+
+    code, summary = _refresh(capsys)
+
+    assert code == cli.EXIT_PARTIAL_FAILURE
+    assert calls == ["due", "later"], "the failed app is not retried in the same run"
+    by_id = {r["bundle_id"]: r for r in summary["refreshed"]}
+    assert by_id["due"]["status"] == "error" and by_id["later"]["status"] == "installed"
+
+
+def test_an_app_done_earlier_on_the_old_certificate_is_resigned_again(
+    monkeypatch, certs, capsys
+):
+    """A got a profile on SERIAL1, then B's refresh issued SERIAL2: A is re-signed too."""
+    calls: list[tuple[str, bool]] = []
+
+    def fake(entry, on_progress=None, **kwargs):
+        calls.append((entry["bundle_id"], kwargs["resign"]))
+        serial = "SERIAL2" if entry["bundle_id"] == "b" or kwargs["resign"] else certs[TEAM]
+        certs[TEAM] = serial
+        stored = {k: v for k, v in entry.items() if k not in ("days_left", "expired")}
+        refresh.record({**stored, "cert_serial": serial})
+        return {"expires_at": "x", "cert_serial": serial, "refresh_mode": "profile"}
+
+    monkeypatch.setattr(cli.sideload, "refresh_record", fake)
+    _seed(_rec("a", TEAM, "SERIAL1", 1), _rec("b", TEAM, "SERIAL1", 1.5))
+
+    code, summary = _refresh(capsys)
+
+    assert code == 0
+    assert calls == [("a", False), ("b", False), ("a", True)]
+    assert [r["bundle_id"] for r in summary["refreshed"]] == ["a", "b"], "one entry per app"
+    assert refresh.get("a")["cert_serial"] == "SERIAL2"
+
+
+def test_a_single_app_run_looks_only_at_its_own_team(refresher, certs, capsys):
+    calls, _failing = refresher
+    certs["OTHERTEAM1"] = "SERIAL9"
+    _seed(_rec("mine", TEAM, "SERIAL1", 5), _rec("theirs", "OTHERTEAM1", "SERIAL1", 5))
+
+    _code, summary = _refresh(capsys, "--bundle-id", "mine")
+
+    assert calls == ["mine"]
+    assert all(set(r) >= {"bundle_id", "status", "refresh_mode", "error"}
+               for r in summary["refreshed"])
+
+
+def test_the_server_reports_exit_2_of_another_command_as_a_failure(monkeypatch):
+    monkeypatch.setattr(cli, "dispatch", lambda _ns: 2)
+    frames: list[dict] = []
+
+    cli._run_request({"id": 8, "args": ["installs"]}, frames.append)
+
+    assert frames[-1]["ok"] is False
+
+
+def test_uninstall_holds_the_engine_lock(monkeypatch, capsys):
+    """So a refresh in the other process cannot find the app gone and reinstall it."""
+    depth: list[int] = []
+    monkeypatch.setattr(cli.apps, "uninstall", lambda *_a: depth.append(refresh._lock_depth))
+
+    cli.dispatch(cli.build_parser().parse_args(["uninstall", "com.example.app", "--json"]))
+
+    assert depth == [1]
+    assert refresh._lock_depth == 0

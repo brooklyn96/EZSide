@@ -362,7 +362,9 @@ def run_sideload(
     # contributes. Only the former is recorded: see _signing_profile.
     resolved_dylibs = _resolve_dylibs(dylibs) + profile_dylibs
     target_dir, scratch = _open_signed_dir(signed_dir, ipa_module.deepest_entry(ipa_path))
-    output = str(target_dir / f"{Path(ipa_path).stem}{SIGNED_SUFFIX}")
+    # Named after the user's file, not EZSide's cached copy (always "source.ipa"), so a
+    # kept signed IPA from one app's refresh never overwrites another's.
+    output = str(target_dir / f"{Path(source_ipa or ipa_path).stem}{SIGNED_SUFFIX}")
     try:
         entitlements_path: str | None = None
         if entitlements is not None:
@@ -688,12 +690,18 @@ def _refresh_profile_only(
 
     Only when the app is still installed and the certificate it was signed with is still
     the current one; the app itself is not touched. Returns None whenever that does not
-    hold or any step fails, and the caller re-signs instead.
+    hold or any step fails, and the caller re-signs instead - after one progress line
+    saying why, which is what tells a profile-only refresh apart on a real device.
     """
     bundle_id, udid = entry.get("bundle_id"), entry.get("udid")
     options = entry.get("options") or {}
+
+    def fall_back(reason: str) -> None:
+        progress("provision", None, f"Re-signing the app instead of only its profile: {reason}")
+
     try:
         if bundle_id not in apps.list_installed(udid):
+            fall_back("the app is not on the device")
             return None
         app_groups: list[str] = []
         if options.get("profile"):
@@ -706,11 +714,17 @@ def _refresh_profile_only(
             app_groups=app_groups,
         )
         if bundle.get("certificate_serial") != entry.get("cert_serial"):
+            fall_back("the signing certificate has changed")
             return None
         profile = Path(bundle["profile_path"]).read_bytes()
         progress("install", None, "Installing the new provisioning profile…")
-        apps.install_profile(profile, udid)
-    except Exception:  # noqa: BLE001 - any failure here means "re-sign instead"
+        try:
+            apps.install_profile(profile, udid)
+        except Exception as exc:  # noqa: BLE001 - whatever misagent raised
+            fall_back(f"the device refused the profile ({exc})")
+            return None
+    except Exception as exc:  # noqa: BLE001 - any failure here means "re-sign instead"
+        fall_back(str(exc) or type(exc).__name__)
         return None
 
     expiry = refresh.profile_expiration(profile)
@@ -748,16 +762,21 @@ def refresh_record(
     headless auto-refresh run) passes in so a refresh honours whatever the setting
     says today rather than what it said when the app was first sideloaded.
     """
-    source = _refresh_source(entry)
     options = entry.get("options") or {}
     progress: ProgressFn = on_progress or (lambda *_args: None)
+    # Only a re-sign needs an IPA, so the profile path is tried without one; a refresh
+    # that can only re-sign still fails on a missing file before any round trip.
+    profile_first = bool(not resign and entry.get("cert_serial") and entry.get("cached_ipa"))
+    if not profile_first:
+        _refresh_source(entry)
 
     account = _refresh_account(entry)
     with gsa.acting_as(account):
-        if not resign and entry.get("cert_serial") and entry.get("cached_ipa"):
+        if profile_first:
             done = _refresh_profile_only(entry, progress)
             if done is not None:
                 return done
+        source = _refresh_source(entry)
         result = run_sideload(
             source,
             entry.get("udid"),
