@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ipaside/platform/url_opener.dart';
 import 'package:ipaside/services/update_planner.dart';
 import 'package:ipaside/services/update_service.dart';
 
@@ -135,35 +136,72 @@ void main() {
   });
 
   group('openReleaseNotes', () {
-    test('opens https notes through cmd start', () async {
-      final List<(String, List<String>)> launches = <(String, List<String>)>[];
-      final UpdateService service = UpdateService(
+    late List<String> opened;
+    late List<(String, List<String>)> launches;
+    late UpdateService service;
+
+    setUp(() {
+      opened = <String>[];
+      launches = <(String, List<String>)>[];
+      service = UpdateService(
         currentVersion: '1.0.0',
         log: (_) {},
         launchDetached: (String exe, List<String> args) async {
           launches.add((exe, List<String>.from(args)));
         },
+        urlOpener: (String url) async {
+          opened.add(url);
+          return true;
+        },
       );
+    });
 
+    test('hands https notes to the opener, never to cmd', () async {
       const String page =
           'https://github.com/brooklyn96/EZSide/releases/tag/v1.2.0';
       expect(await service.openReleaseNotes(page), isTrue);
-      expect(launches.single.$1, 'cmd');
-      expect(launches.single.$2, <String>['/c', 'start', '', page]);
+      expect(opened, <String>[page]);
+      expect(launches, isEmpty, reason: 'no process, and so no cmd, is started');
+    });
+
+    test('keeps & in a URL intact', () async {
+      const String page = 'https://example.com/a?x=1&y=2';
+      await service.openReleaseNotes(page);
+      expect(opened.single, page);
     });
 
     test('falls back to the releases index for an unsafe URL', () async {
-      final List<(String, List<String>)> launches = <(String, List<String>)>[];
-      final UpdateService service = UpdateService(
+      expect(await service.openReleaseNotes('file:///tmp/x'), isTrue);
+      expect(opened.single, service.releasesPage.toString());
+      expect(launches, isEmpty);
+    });
+
+    test('reports false when the opener refuses', () async {
+      final UpdateService refusing = UpdateService(
         currentVersion: '1.0.0',
         log: (_) {},
-        launchDetached: (String exe, List<String> args) async {
-          launches.add((exe, List<String>.from(args)));
-        },
+        urlOpener: (String url) async => false,
       );
+      expect(await refusing.openReleaseNotes(), isFalse);
+    });
 
-      expect(await service.openReleaseNotes('file:///tmp/x'), isTrue);
-      expect(launches.single.$2.last, service.releasesPage.toString());
+    test('reports false when the opener throws', () async {
+      final UpdateService failing = UpdateService(
+        currentVersion: '1.0.0',
+        log: (_) {},
+        urlOpener: (String url) async => throw const FileSystemException('x'),
+      );
+      expect(await failing.openReleaseNotes(), isFalse);
+    });
+  });
+
+  group('openUrl', () {
+    test('rejects every non-http scheme before touching the shell', () async {
+      expect(await openUrl('file:///C:/Windows/System32/calc.exe'), isFalse);
+      expect(await openUrl('javascript:alert(1)'), isFalse);
+      expect(await openUrl('ms-settings:'), isFalse);
+      expect(await openUrl('calc.exe'), isFalse);
+      expect(await openUrl(''), isFalse);
     });
   });
 }

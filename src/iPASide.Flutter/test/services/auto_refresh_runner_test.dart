@@ -50,7 +50,12 @@ void main() {
   late Directory temp;
   late AppPaths paths;
 
+  /// Every notice the run asked to show; a real message box would block CI.
+  final List<(String, String)> notices = <(String, String)>[];
+  void notice(String title, String message) => notices.add((title, message));
+
   setUp(() {
+    notices.clear();
     temp = Directory.systemTemp.createTempSync('ipaside_autorefresh');
     paths = AppPaths.rooted(temp.path);
   });
@@ -87,6 +92,7 @@ void main() {
         paths: paths,
         settings: _FakeSettings(),
         transport: runner,
+        notice: notice,
       );
 
       expect(code, 0);
@@ -107,6 +113,7 @@ void main() {
           signedIpa: const SignedIpaSettings(keep: true),
         ),
         transport: runner,
+        notice: notice,
       );
 
       expect(runner.calls.single, <String>['refresh', '--keep-signed']);
@@ -124,6 +131,7 @@ void main() {
           ),
         ),
         transport: runner,
+        notice: notice,
       );
 
       expect(runner.calls.single, <String>[
@@ -141,9 +149,103 @@ void main() {
         paths: paths,
         settings: settings,
         transport: _FakeRunner(),
+        notice: notice,
       );
 
       expect(settings.reads, 1);
+    });
+  });
+
+  group('AutoRefreshRunner failure notice', () {
+    test('a failed app shows one notice, after the log is written', () async {
+      String? logAtNotice;
+      final _FakeRunner runner = _FakeRunner(
+        outcome: const EngineResult(
+          ok: true,
+          data: <String, dynamic>{
+            'refreshed': <dynamic>[
+              <String, dynamic>{'bundle_id': 'com.a', 'status': 'error'},
+              <String, dynamic>{'bundle_id': 'com.b', 'status': 'error'},
+              <String, dynamic>{'bundle_id': 'com.c', 'status': 'installed'},
+            ],
+          },
+        ),
+      );
+
+      final int code = await AutoRefreshRunner.run(
+        paths: paths,
+        settings: _FakeSettings(),
+        transport: runner,
+        notice: (String title, String message) {
+          logAtNotice = log();
+          notice(title, message);
+        },
+      );
+
+      expect(code, 1);
+      expect(notices, hasLength(1));
+      expect(notices.single.$1, 'EZSide');
+      expect(notices.single.$2, contains('2 app(s)'));
+      expect(notices.single.$2, contains('Library'));
+      expect(notices.single.$2, contains('thử lại'));
+      expect(logAtNotice, contains('com.a'));
+    });
+
+    test('a thrown run shows one notice and exits 1', () async {
+      final int code = await AutoRefreshRunner.run(
+        paths: paths,
+        settings: _FakeSettings(),
+        transport: _FakeRunner(outcome: EngineException('engine down')),
+        notice: notice,
+      );
+
+      expect(code, 1);
+      expect(notices, hasLength(1));
+      expect(notices.single.$2, contains('could not refresh'));
+    });
+
+    test('all apps succeeding shows nothing', () async {
+      final int code = await AutoRefreshRunner.run(
+        paths: paths,
+        settings: _FakeSettings(),
+        transport: _FakeRunner(
+          outcome: const EngineResult(
+            ok: true,
+            data: <String, dynamic>{
+              'refreshed': <dynamic>[
+                <String, dynamic>{'bundle_id': 'com.a', 'status': 'installed'},
+              ],
+            },
+          ),
+        ),
+        notice: notice,
+      );
+
+      expect(code, 0);
+      expect(notices, isEmpty);
+    });
+
+    test('nothing due shows nothing', () async {
+      final int code = await AutoRefreshRunner.run(
+        paths: paths,
+        settings: _FakeSettings(),
+        transport: _FakeRunner(),
+        notice: notice,
+      );
+
+      expect(code, 0);
+      expect(notices, isEmpty);
+    });
+
+    test('a notice that throws does not change the exit code', () async {
+      final int code = await AutoRefreshRunner.run(
+        paths: paths,
+        settings: _FakeSettings(),
+        transport: _FakeRunner(outcome: EngineException('engine down')),
+        notice: (String title, String message) => throw StateError('no ui'),
+      );
+
+      expect(code, 1);
     });
   });
 
@@ -153,6 +255,7 @@ void main() {
         paths: paths,
         settings: _FakeSettings(),
         transport: _FakeRunner(),
+        notice: notice,
       );
 
       expect(log(), contains('nothing to refresh'));
@@ -179,9 +282,10 @@ void main() {
         paths: paths,
         settings: _FakeSettings(),
         transport: runner,
+        notice: notice,
       );
 
-      expect(code, 0, reason: 'per-app failures are not a failed run');
+      expect(code, 1, reason: 'a failed app makes the scheduled task fail');
       expect(log(), contains('com.a'));
       expect(log(), contains('com.b'));
       expect(log(), contains('device is not connected'));
@@ -196,6 +300,7 @@ void main() {
         paths: paths,
         settings: _FakeSettings(),
         transport: runner,
+        notice: notice,
       );
 
       expect(code, 1);
@@ -211,6 +316,7 @@ void main() {
         paths: nested,
         settings: _FakeSettings(),
         transport: _FakeRunner(),
+        notice: notice,
       );
 
       expect(File(nested.autoRefreshLogPath).existsSync(), isTrue);

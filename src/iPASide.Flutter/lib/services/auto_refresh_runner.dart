@@ -4,6 +4,7 @@ import 'dart:io';
 
 import '../engine/engine.dart';
 import '../platform/app_paths.dart';
+import '../platform/native_dialog.dart';
 import '../platform/single_instance.dart';
 import '../platform/windows_child_process_reaper.dart';
 import 'settings_store.dart';
@@ -22,6 +23,10 @@ import 'settings_store.dart';
 /// Without that, the engine's own default would quietly delete signed IPAs the
 /// user asked to keep — every night, and with nothing on screen to notice it.
 ///
+/// When the run throws, or any app comes back with status `error`, one native
+/// warning box is shown AFTER the engine has exited and the log is written, and
+/// the exit code is 1. Nothing is shown when nothing was due or all succeeded.
+///
 /// [run] must be awaited before any window is created, and its result passed to
 /// `exit`.
 abstract final class AutoRefreshRunner {
@@ -35,7 +40,7 @@ abstract final class AutoRefreshRunner {
       arguments.any((String argument) => argument.toLowerCase() == cliArgument);
 
   /// Runs the refresh, appends the log, and returns the process exit code: 0 when
-  /// the run completed, 1 when it threw.
+  /// the run completed and every app succeeded, 1 when it threw or any app failed.
   ///
   /// Unlike the C# original - where `Program.Main` held the marker for both paths
   /// before branching - this also holds the installer's running-app marker for the
@@ -45,16 +50,21 @@ abstract final class AutoRefreshRunner {
   /// nobody is watching, so it has to be provable without spawning a real engine
   /// and re-signing the user's actual apps. Production passes nothing and gets
   /// exactly the client it always did, disposed the same way.
+  ///
+  /// [notice] replaces the message box, for the same reason: tests must not open
+  /// a real window.
   static Future<int> run({
     AppPaths? paths,
     SettingsStore? settings,
     EngineCommandRunner? transport,
+    NoticeDialog notice = showWarningNotice,
   }) async {
     final AppPaths appPaths = paths ?? AppPaths.instance;
     final SettingsStore store = settings ?? SettingsStore(paths: appPaths);
     final RunningAppMarker marker = RunningAppMarker.hold();
     final List<String> lines = <String>[];
     int exitCode = 0;
+    int failedApps = 0;
 
     try {
       appPaths.ensureRootExists();
@@ -81,6 +91,10 @@ abstract final class AutoRefreshRunner {
           lines.add(AutoRefreshLog.formatNothingToRefresh(DateTime.now()));
         } else {
           lines.addAll(AutoRefreshLog.formatLines(DateTime.now(), summary));
+          failedApps = summary.refreshed
+              .where((RefreshEntry entry) => entry.status == 'error')
+              .length;
+          if (failedApps > 0) exitCode = 1;
         }
       } finally {
         await owned?.dispose();
@@ -95,7 +109,29 @@ abstract final class AutoRefreshRunner {
     }
 
     await _appendLines(appPaths.autoRefreshLogPath, lines);
+    if (exitCode != 0) {
+      try {
+        notice('EZSide', failureText(failedApps));
+      } catch (_) {
+        // The log already holds the failure; a notice that cannot be shown must
+        // not change the exit code.
+      }
+    }
     return exitCode;
+  }
+
+  /// The English + Vietnamese text of the failure notice. [failedApps] is 0 when
+  /// the run itself could not complete.
+  static String failureText(int failedApps) {
+    final String english = failedApps > 0
+        ? 'EZSide could not refresh $failedApps app(s).'
+        : 'EZSide could not refresh your apps.';
+    final String vietnamese = failedApps > 0
+        ? 'EZSide không thể làm mới $failedApps ứng dụng.'
+        : 'EZSide không thể làm mới các ứng dụng.';
+    return '$english\n$vietnamese\n\n'
+        'Open EZSide > Library to retry.\n'
+        'Mở EZSide > Library để thử lại.';
   }
 
   static String _messageOf(Object error) =>

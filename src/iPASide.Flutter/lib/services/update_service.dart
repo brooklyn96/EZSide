@@ -5,6 +5,7 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 
 import '../platform/app_paths.dart';
+import '../platform/url_opener.dart';
 import 'update_planner.dart';
 
 /// Starts a detached OS process. Returns once the launch has been accepted.
@@ -64,10 +65,12 @@ class UpdateService {
     HttpClient? httpClient,
     void Function(String message)? log,
     DetachedLauncher? launchDetached,
+    UrlOpener? urlOpener,
   })  : _paths = paths ?? AppPaths.instance,
         _http = httpClient ?? HttpClient(),
         _log = log ?? _defaultLog,
-        _launchDetached = launchDetached ?? _defaultLaunchDetached;
+        _launchDetached = launchDetached ?? _defaultLaunchDetached,
+        _openUrl = urlOpener ?? openUrl;
 
   final String currentVersion;
   final String owner;
@@ -77,6 +80,7 @@ class UpdateService {
   final HttpClient _http;
   final void Function(String) _log;
   final DetachedLauncher _launchDetached;
+  final UrlOpener _openUrl;
 
   static void _defaultLog(String message) => debugPrint('[update] $message');
 
@@ -103,15 +107,14 @@ class UpdateService {
   ///
   /// Only `http`/`https` targets are accepted from the release payload; anything
   /// else falls back to the releases index so a compromised API reply cannot
-  /// steer `cmd /c start` at an arbitrary scheme.
+  /// steer the launch at an arbitrary scheme. The URL is handed to the shell
+  /// directly, never through `cmd`.
   Future<bool> openReleaseNotes([String? url]) async {
     final Uri target = resolveReleaseNotesUri(url);
     try {
-      await _launchDetached(
-        'cmd',
-        <String>['/c', 'start', '', target.toString()],
-      );
-      return true;
+      final bool opened = await _openUrl(target.toString());
+      if (!opened) _log('the browser did not accept $target');
+      return opened;
     } on Object catch (error) {
       _log('failed to open release notes: $error');
       return false;
