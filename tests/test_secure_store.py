@@ -185,3 +185,26 @@ def test_a_target_that_stays_locked_raises_after_five_tries_and_cleans_up(tmp_pa
     assert len(attempts) == 5
     assert secure_store.read_json(path) == {"v": 1}
     assert [p.name for p in tmp_path.iterdir()] == ["secret.json"]
+
+
+def test_replace_atomic_is_public_and_retries_a_held_target(tmp_path, monkeypatch):
+    src, dst = tmp_path / "new", tmp_path / "old"
+    src.write_text("new")
+    dst.write_text("old")
+    real_replace = os.replace
+    attempts: list[int] = []
+
+    def flaky(a, b):
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise PermissionError("[WinError 5] Access is denied")
+        real_replace(a, b)
+
+    monkeypatch.setattr(os, "replace", flaky)
+    monkeypatch.setattr(secure_store.time, "sleep", lambda _s: None)
+
+    secure_store.replace_atomic(src, dst)
+    monkeypatch.undo()
+
+    assert len(attempts) == 3
+    assert dst.read_text() == "new" and not src.exists()

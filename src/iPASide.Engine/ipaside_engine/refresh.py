@@ -8,7 +8,7 @@ from a scheduled background task.
 
 The registry is a single JSON file keyed by installed bundle id. It holds no
 secrets (only paths + option flags + timestamps). Each app also gets a folder of
-its own, data_dir()/apps/<bundle id>, holding EZSide's copy of the source IPA so a
+its own, data_dir()/apps/<bundle id>-<hash> (see :func:`app_dir`), holding EZSide's copy of the source IPA so a
 refresh never depends on the user keeping theirs.
 
 Every write, and every sideload / refresh / forget, runs under
@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import datetime
+import hashlib
 import json
 import os
 import plistlib
@@ -32,7 +33,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterator
 
-from . import paths
+from . import paths, secure_store
 from .errors import EngineError
 
 #: How long an operation waits for another EZSide process to finish before giving up.
@@ -40,6 +41,7 @@ LOCK_TIMEOUT_SECONDS = 600.0
 _LOCK_POLL_SECONDS = 0.25
 LOCK_FILE = "engine.lock"
 CACHED_IPA = "source.ipa"
+_WAIT_MESSAGE = "Waiting for another EZSide operation to finish..."
 
 # A bundle id as Apple allows it (letters, digits, '-', '_' in dot-separated parts). It
 # names a folder, so anything else - '..', a slash - gets no cache rather than a path.
@@ -98,7 +100,7 @@ def _save(data: dict[str, Any]) -> None:
             json.dump(data, handle, indent=2)
             handle.flush()
             os.fsync(handle.fileno())
-        os.replace(temp, path)
+        secure_store.replace_atomic(temp, path)
     except BaseException:
         Path(temp).unlink(missing_ok=True)
         raise
@@ -147,9 +149,18 @@ def _busy() -> RegistryError:
     )
 
 
+def _announce_wait() -> None:
+    """One progress event on stderr - the engine's progress channel (see __main__'s
+    ``_progress_to_stderr``; ``serve`` forwards each line to the app) - so a caller
+    waiting on another operation shows a message instead of looking frozen."""
+    event = {"event": "progress", "phase": "wait", "percent": None, "step": _WAIT_MESSAGE}
+    print(json.dumps(event), file=sys.stderr, flush=True)
+
+
 def _acquire_file_lock() -> Any:
     handle = open(paths.data_dir() / LOCK_FILE, "a+b")
     deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+    announced = False
     while True:
         try:
             _try_lock(handle)
@@ -158,6 +169,9 @@ def _acquire_file_lock() -> Any:
             if time.monotonic() >= deadline:
                 handle.close()
                 raise _busy() from None
+            if not announced:
+                announced = True
+                _announce_wait()
             time.sleep(_LOCK_POLL_SECONDS)
 
 
@@ -191,10 +205,15 @@ def operation_lock() -> Iterator[None]:
 # EZSide's own copy of each app
 # --------------------------------------------------------------------------- #
 def app_dir(bundle_id: str) -> Path | None:
-    """data_dir()/apps/<bundle_id>, or None for an id that cannot safely name a folder."""
+    """data_dir()/apps/<bundle_id>-<hash>, or None for an id that cannot safely name a folder.
+
+    NTFS ignores case, so two ids that differ only by case would share one folder. The
+    name is the lowercase id plus a short hash of the exact id, which keeps them apart.
+    """
     if not bundle_id or not _BUNDLE_ID_RE.match(bundle_id):
         return None
-    return paths.data_dir() / "apps" / bundle_id
+    digest = hashlib.sha256(bundle_id.encode("utf-8")).hexdigest()[:8]
+    return paths.data_dir() / "apps" / f"{bundle_id.lower()}-{digest}"
 
 
 def cache_ipa(bundle_id: str, source: str) -> str | None:
@@ -215,7 +234,7 @@ def cache_ipa(bundle_id: str, source: str) -> str | None:
         os.close(fd)
         try:
             shutil.copyfile(source, temp)
-            os.replace(temp, target)
+            secure_store.replace_atomic(temp, target)
         except BaseException:
             Path(temp).unlink(missing_ok=True)
             raise

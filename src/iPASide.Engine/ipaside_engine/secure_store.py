@@ -83,12 +83,12 @@ def unprotect(blob: bytes) -> bytes:
     return _dpapi("CryptUnprotectData", blob)
 
 
-def _replace(temp: str, path: Path) -> None:
+def replace_atomic(src: str | Path, dst: str | Path) -> None:
     """os.replace, retried briefly: on Windows it fails with PermissionError while
-    another process (a second engine, a virus scanner) has the target open."""
+    another process (a second engine, a virus scanner, a reader) has the target open."""
     for attempt in range(_REPLACE_TRIES):
         try:
-            os.replace(temp, path)
+            os.replace(src, dst)
             return
         except PermissionError:
             if attempt == _REPLACE_TRIES - 1:
@@ -107,7 +107,7 @@ def write_bytes(path: Path, data: bytes) -> None:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
-        _replace(temp, path)
+        replace_atomic(temp, path)
     except BaseException:
         Path(temp).unlink(missing_ok=True)
         raise

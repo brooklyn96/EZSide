@@ -7,6 +7,7 @@ working on the same sideloads.json; a damaged registry must never be quietly rep
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -64,6 +65,30 @@ def test_a_held_lock_times_out_with_a_sentence(monkeypatch):
         refresh._unlock(other)
 
 
+def test_waiting_for_the_lock_emits_one_progress_line(monkeypatch, capsys):
+    monkeypatch.setattr(refresh, "LOCK_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(refresh, "_LOCK_POLL_SECONDS", 0.05)
+    other = _other_process_holds_the_lock()
+    try:
+        with pytest.raises(refresh.RegistryError):
+            with refresh.operation_lock():
+                pass
+    finally:
+        refresh._unlock(other)
+
+    lines = [json.loads(line) for line in capsys.readouterr().err.splitlines() if line]
+    assert lines == [{
+        "event": "progress", "phase": "wait", "percent": None,
+        "step": "Waiting for another EZSide operation to finish...",
+    }]
+
+
+def test_an_uncontended_lock_prints_nothing(capsys):
+    with refresh.operation_lock():
+        pass
+    assert capsys.readouterr().err == ""
+
+
 def test_registry_writes_take_the_lock(monkeypatch):
     seen = []
     real_save = refresh._save
@@ -118,6 +143,27 @@ def test_a_write_leaves_no_temp_file_and_a_failed_one_keeps_the_old_registry(mon
     assert [p.name for p in registry.parent.glob("sideloads.json*")] == ["sideloads.json"]
 
 
+def test_a_save_survives_a_reader_holding_the_registry_open(monkeypatch):
+    refresh.record({"bundle_id": "com.a"})
+    real_replace = os.replace
+    attempts = []
+
+    def reader_holds_it(src, dst):
+        attempts.append(1)
+        if len(attempts) < 3:
+            raise PermissionError("[WinError 5] Access is denied")
+        real_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", reader_holds_it)
+    monkeypatch.setattr(refresh.secure_store.time, "sleep", lambda _s: None)
+
+    refresh.record({"bundle_id": "com.b"})
+    monkeypatch.setattr(os, "replace", real_replace)  # not undo(): that drops the data-dir isolation
+
+    assert len(attempts) == 3
+    assert set(json.loads(paths.installs_file().read_text(encoding="utf-8"))) == {"com.a", "com.b"}
+
+
 # --------------------------------------------------------------------------- #
 # EZSide's own copy of an app
 # --------------------------------------------------------------------------- #
@@ -136,3 +182,20 @@ def test_caching_from_the_cache_itself_is_a_no_op(tmp_path):
 
     assert refresh.cache_ipa("com.a", cached) == cached
     assert open(cached, "rb").read() == b"PK original"
+
+
+def test_ids_that_differ_only_by_case_get_distinct_folders(tmp_path):
+    upper, lower = refresh.app_dir("com.Example.App"), refresh.app_dir("com.example.app")
+
+    assert upper != lower
+    assert upper.name.lower() != lower.name.lower(), "distinct even on a case-insensitive disk"
+    assert refresh.app_dir("com.Example.App") == upper, "stable for one id"
+
+    source = tmp_path / "a.ipa"
+    source.write_bytes(b"PK one")
+    refresh.cache_ipa("com.Example.App", str(source))
+    source.write_bytes(b"PK two")
+    refresh.cache_ipa("com.example.app", str(source))
+    assert (upper / refresh.CACHED_IPA).read_bytes() == b"PK one"
+    refresh.forget("com.example.app")
+    assert (upper / refresh.CACHED_IPA).exists(), "forgetting one leaves the other's cache"
