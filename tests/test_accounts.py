@@ -128,9 +128,64 @@ def test_signing_out_removes_the_signing_folder_under_the_engine_lock(monkeypatc
 
     gsa.logout(ONE)
 
-    assert depth == [1]
+    assert depth and min(depth) >= 1, "held (re-entrantly, inside the whole sign-out's lock)"
     assert not folder.exists()
     assert refresh._lock_depth == 0, "and released"
+
+
+def test_signing_out_holds_the_engine_lock_until_the_account_file_is_gone(monkeypatch):
+    """Else an operation in the other process could slip in between the key folder going and
+    the account file going, and make a new key folder for the account being signed out."""
+    from ipaside_engine import refresh
+
+    sign_in(ONE)
+    account = paths.account_file(ONE)
+    acquisitions: list[bool] = []
+    real = refresh.operation_lock
+
+    class Spy:
+        def __enter__(self):
+            self.outer = real()
+            self.outer.__enter__()
+            acquisitions.append(account.exists())
+
+        def __exit__(self, *exc):
+            acquisitions.append(account.exists())  # state at the moment of release
+            return self.outer.__exit__(*exc)
+
+    monkeypatch.setattr(refresh, "operation_lock", Spy)
+
+    gsa.logout(ONE)
+
+    # One acquisition for the whole sign-out (the signing folder's own lock is re-entrant
+    # but would show up here as a second pair), and the file is gone before it is released.
+    assert acquisitions[0] is True
+    assert acquisitions[-1] is False
+
+
+def test_signing_out_is_one_lock_acquisition_for_every_account(monkeypatch):
+    from ipaside_engine import refresh
+
+    sign_in(ONE)
+    sign_in(TWO)
+    entered: list[int] = []
+    real = refresh.operation_lock
+
+    class Spy:
+        def __enter__(self):
+            entered.append(refresh._lock_depth)
+            self.outer = real()
+            self.outer.__enter__()
+
+        def __exit__(self, *exc):
+            return self.outer.__exit__(*exc)
+
+    monkeypatch.setattr(refresh, "operation_lock", Spy)
+
+    gsa.logout()
+
+    assert entered.count(0) == 1, "taken once from outside"
+    assert gsa.accounts() == {"accounts": [], "active": None}
 
 
 def test_signing_out_an_unknown_account_says_so():

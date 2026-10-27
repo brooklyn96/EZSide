@@ -585,7 +585,10 @@ void main() {
 
       expect(
         dialogs.alerts.single,
-        (title: 'Refresh failed', message: 'com.b: no device'),
+        (
+          title: "Some apps couldn't be refreshed",
+          message: 'com.b: no device',
+        ),
       );
       expect(row.isRefreshing, isFalse);
       expect(runner.callsTo('installs'), hasLength(2));
@@ -700,6 +703,22 @@ void main() {
       expect(vm.hasItems, isFalse);
     });
 
+    test('forgets the app before it uninstalls it', () async {
+      // Each call takes the engine lock on its own; with the record gone first,
+      // a refresh that gets in between has nothing to put back on the phone.
+      final _FakeRunner runner = _FakeRunner()
+        ..always('installs', _ok(<dynamic>[_record(bundleId: 'com.a')]));
+      final LibraryViewModel vm = await _loaded(runner, _FakeDialogs());
+
+      await vm.removeRow(vm.rows.single);
+
+      final List<String> order = <String>[
+        for (final List<String> argv in runner.calls)
+          if (argv.first == 'forget' || argv.first == 'uninstall') argv.first,
+      ];
+      expect(order, <String>['forget', 'uninstall']);
+    });
+
     test('a declined confirm touches nothing', () async {
       final _FakeRunner runner = _FakeRunner()
         ..always('installs', _ok(<dynamic>[_record(bundleId: 'com.a')]));
@@ -754,7 +773,7 @@ void main() {
 
       await vm.removeRow(vm.rows.single);
 
-      expect(runner.callsTo('forget'), isEmpty);
+      expect(runner.callsTo('forget'), hasLength(1));
       expect(runner.callsTo('installs'), hasLength(1));
       expect(dialogs.alerts, isEmpty);
     });

@@ -115,7 +115,11 @@ def write_bytes(path: Path, data: bytes) -> None:
 
 def read_bytes(path: Path) -> bytes:
     """Read a file written by :func:`write_bytes`; a legacy plain file comes back as is."""
-    raw = Path(path).read_bytes()
+    return unwrap(Path(path).read_bytes())
+
+
+def unwrap(raw: bytes) -> bytes:
+    """The content of a file's [raw] bytes: unprotected, or as is for a legacy plain file."""
     if raw.startswith(MAGIC):
         return unprotect(raw[len(MAGIC):])
     return raw

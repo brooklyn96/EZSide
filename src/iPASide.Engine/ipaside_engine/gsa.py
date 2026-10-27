@@ -1126,23 +1126,29 @@ def _remove_signing_material(slug: str) -> None:
 
 def logout(email: str | None = None) -> dict[str, Any]:
     """Sign out one account, or every account when [email] is omitted."""
+    from . import refresh  # a higher layer than gsa, so imported here
+
     _migrate_legacy_account()
     _clear_pending()
 
-    if email is None:
-        removed = [a["email"] for a in list_accounts()]
-        # Walk the files, not list_accounts(): one DPAPI cannot open still holds a key.
-        for path in paths.accounts_dir().glob("*.json"):
-            _remove_signing_material(path.stem)
-            path.unlink(missing_ok=True)
-        paths.active_account_file().unlink(missing_ok=True)
-        return {"status": "signed_out", "removed": removed}
+    # One acquisition for the whole sign-out: an operation that got in between the key
+    # folder going and the account file going would load the session and make a new key
+    # folder for an account that is being signed out.
+    with refresh.operation_lock():
+        if email is None:
+            removed = [a["email"] for a in list_accounts()]
+            # Walk the files, not list_accounts(): one DPAPI cannot open still holds a key.
+            for path in paths.accounts_dir().glob("*.json"):
+                _remove_signing_material(path.stem)
+                path.unlink(missing_ok=True)
+            paths.active_account_file().unlink(missing_ok=True)
+            return {"status": "signed_out", "removed": removed}
 
-    path = paths.account_file(email)
-    if not path.exists():
-        raise GsaError(f"{email} is not signed in.")
-    _remove_signing_material(paths.account_slug(email))
-    path.unlink()
-    if _active_email() is None:
-        paths.active_account_file().unlink(missing_ok=True)
-    return {"status": "signed_out", "removed": [email], "active": _active_email()}
+        path = paths.account_file(email)
+        if not path.exists():
+            raise GsaError(f"{email} is not signed in.")
+        _remove_signing_material(paths.account_slug(email))
+        path.unlink()
+        if _active_email() is None:
+            paths.active_account_file().unlink(missing_ok=True)
+        return {"status": "signed_out", "removed": [email], "active": _active_email()}

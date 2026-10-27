@@ -259,8 +259,14 @@ class LibraryViewModel extends BaseViewModel {
         // Apps the run did refresh changed the library, so reload for them.
         if (failed.length < summary.refreshed.length) await _load();
         notify();
+        // When the clicked app is fine and only a cascaded one failed, say so,
+        // rather than a title that reads as if the clicked app failed.
+        final bool clickedFailed =
+            failed.any((RefreshEntry entry) => entry.bundleId == row.bundleId);
         await _dialogs.alert(
-          title: 'Refresh failed',
+          title: clickedFailed
+              ? 'Refresh failed'
+              : "Some apps couldn't be refreshed",
           message: failed.length == 1 && failed.single.bundleId == row.bundleId
               ? EngineException.cleanError(failed.single.error ?? 'refresh failed')
               : failed
@@ -302,6 +308,16 @@ class LibraryViewModel extends BaseViewModel {
     notify();
 
     try {
+      // Forget first: each call takes the engine lock on its own, and a refresh
+      // that got in between would find the app gone from the phone, put it back,
+      // and leave it there with no record. Without a record it has nothing to do.
+      try {
+        await _engine.forget(row.bundleId);
+      } catch (error) {
+        // Best-effort.
+        if (BaseViewModel.isShutdown(error)) return;
+      }
+
       try {
         // The phone the app actually went to, which the registry records, not
         // whichever one happens to be selected now. Retargeting to a second
@@ -313,14 +329,7 @@ class LibraryViewModel extends BaseViewModel {
           connection: _devices.connectionArg,
         );
       } catch (error) {
-        // The device may be offline; the uninstall is best-effort.
-        if (BaseViewModel.isShutdown(error)) return;
-      }
-
-      try {
-        await _engine.forget(row.bundleId);
-      } catch (error) {
-        // Best-effort as well.
+        // The device may be offline; the uninstall is best-effort as well.
         if (BaseViewModel.isShutdown(error)) return;
       }
 

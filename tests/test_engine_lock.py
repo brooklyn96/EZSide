@@ -78,7 +78,7 @@ def test_waiting_for_the_lock_emits_one_progress_line(monkeypatch, capsys):
 
     lines = [json.loads(line) for line in capsys.readouterr().err.splitlines() if line]
     assert lines == [{
-        "event": "progress", "phase": "wait", "percent": None,
+        "event": "progress", "phase": "provision", "percent": None,
         "step": "Waiting for another EZSide operation to finish...",
     }]
 

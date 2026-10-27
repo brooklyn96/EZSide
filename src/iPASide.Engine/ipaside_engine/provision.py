@@ -50,16 +50,21 @@ def _account_slug(email: str | None) -> str | None:
 
 
 def _read_secret(path: Path) -> dict[str, Any] | None:
-    """Read certificate.json / bundle.json; None when it is missing or cannot be read.
+    """Read certificate.json / bundle.json; None when it is missing or its content is unusable.
 
-    Unreadable most often means DPAPI refuses it: the data folder was copied to another
+    Unusable most often means DPAPI refuses it: the data folder was copied to another
     PC or Windows user. That is treated as no file at all - with one line saying so -
     so the next sideload issues new assets instead of every sideload failing for good.
+
+    Failing to read the file at all (a backup or indexer tool holding it open, no
+    access) is not "no file": it raises, because a caller that took it for one would
+    revoke a certificate that is still good.
     """
     if not path.exists():
         return None
+    raw = path.read_bytes()
     try:
-        data = secure_store.read_json(path)
+        data = json.loads(secure_store.unwrap(raw).decode("utf-8"))
     except (OSError, ValueError) as exc:
         _note(f"Ignoring {path.name}, which cannot be read on this PC or account ({exc}).")
         return None

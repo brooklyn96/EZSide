@@ -678,8 +678,8 @@ def _cmd_refresh(args: argparse.Namespace) -> int:
             suffix = f" ({res['error']})" if res.get("error") else ""
             mode = f" [{res['refresh_mode']}]" if res.get("refresh_mode") else ""
             print(f"{res['bundle_id']}: {res['status']}{mode}{suffix}")
-    failed = any(res["status"] == "error" for res in results)
-    return EXIT_PARTIAL_FAILURE if failed else 0
+    any_failed = any(res["status"] == "error" for res in results)
+    return EXIT_PARTIAL_FAILURE if any_failed else 0
 
 
 def _mb(count: int) -> str:

@@ -316,6 +316,23 @@ def test_a_refused_profile_leaves_the_old_one_installed(misagent):
     assert fake.closed
 
 
+def test_an_old_profile_the_device_will_not_remove_does_not_fail_the_refresh(misagent, capsys):
+    """The new profile is already installed and listed; only tidying up failed."""
+    fake = misagent([_profile("OLD-ONE"), _profile("OLD-TWO")])
+
+    async def refuse(uuid):
+        fake.events.append(f"remove {uuid}")
+        raise RuntimeError("device said no")
+
+    fake.remove = refuse
+
+    assert apps.install_profile(_profile("NEW-UUID"), "UDID") == "NEW-UUID"
+
+    assert fake.events == ["install", "remove OLD-ONE", "remove OLD-TWO"], "each one is tried"
+    assert fake.closed
+    assert "device said no" in capsys.readouterr().err
+
+
 def test_bytes_that_are_not_a_profile_are_refused_before_touching_the_device(misagent):
     fake = misagent([_profile("OLD-SAME-APP")])
 
@@ -547,6 +564,31 @@ def test_the_server_reports_exit_2_of_another_command_as_a_failure(monkeypatch):
     cli._run_request({"id": 8, "args": ["installs"]}, frames.append)
 
     assert frames[-1]["ok"] is False
+
+
+def test_sign_reads_the_bundle_and_signs_under_the_engine_lock(monkeypatch, tmp_path, capsys):
+    """So its password and the .p12 it names are read as a pair while another process provisions."""
+    depth: dict[str, int] = {}
+    bundle = {"p12_path": "p.p12", "p12_password": "pw", "profile_path": "x.mobileprovision",
+              "bundle_id": "com.a"}
+
+    def load_bundle():
+        depth["load"] = refresh._lock_depth
+        return bundle
+
+    def sign_ipa(*_a, **_k):
+        depth["sign"] = refresh._lock_depth
+        return {"output": str(tmp_path / "out.ipa")}
+
+    monkeypatch.setattr(cli.provision, "load_bundle", load_bundle)
+    monkeypatch.setattr(cli.signing, "sign_ipa", sign_ipa)
+
+    code = cli.dispatch(cli.build_parser().parse_args(
+        ["sign", "in.ipa", "-o", str(tmp_path / "out.ipa"), "--json"]))
+
+    assert code == 0
+    assert depth == {"load": 1, "sign": 1}
+    assert refresh._lock_depth == 0
 
 
 def test_uninstall_holds_the_engine_lock(monkeypatch, capsys):

@@ -8,6 +8,7 @@ show a live progress bar.
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 from typing import Any, Callable
 
@@ -307,10 +308,16 @@ async def _install_profile_async(profile: bytes, serial: str | None) -> str:
                 )
             # AltServer's rule: remove older versions of the profile just installed -
             # same team, same app - so they do not pile up. Another team's profiles,
-            # and this team's for other apps, are never touched.
+            # and this team's for other apps, are never touched. Best effort: the new
+            # profile is already installed, so a failed removal is not a failed refresh.
             for old in listed:
                 if old.get("UUID") != uuid and _profile_key(old) == (team, app_identifier):
-                    await misagent.remove(old["UUID"])
+                    try:
+                        await misagent.remove(old["UUID"])
+                    except Exception as exc:  # noqa: BLE001 - the device said no
+                        # A plain line, not a progress event: it is a note for the log.
+                        print(f"Could not remove an old provisioning profile: {exc}",
+                              file=sys.stderr, flush=True)
         finally:
             await maybe_await(misagent.close())
     finally:

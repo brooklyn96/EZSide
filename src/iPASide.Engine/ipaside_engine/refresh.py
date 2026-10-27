@@ -152,8 +152,12 @@ def _busy() -> RegistryError:
 def _announce_wait() -> None:
     """One progress event on stderr - the engine's progress channel (see __main__'s
     ``_progress_to_stderr``; ``serve`` forwards each line to the app) - so a caller
-    waiting on another operation shows a message instead of looking frozen."""
-    event = {"event": "progress", "phase": "wait", "percent": None, "step": _WAIT_MESSAGE}
+    waiting on another operation shows a message instead of looking frozen.
+
+    Sent as phase "provision", the first step of every progress schedule in the app: a
+    phase of its own would be dropped, as each schedule draws only its own steps.
+    """
+    event = {"event": "progress", "phase": "provision", "percent": None, "step": _WAIT_MESSAGE}
     print(json.dumps(event), file=sys.stderr, flush=True)
 
 

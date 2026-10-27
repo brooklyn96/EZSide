@@ -256,6 +256,28 @@ def test_an_unreadable_certificate_cache_is_treated_as_missing(portal, tmp_path,
     assert len(lines) == 1 and "certificate.json" in lines[0], "one line says why"
 
 
+def test_a_certificate_cache_that_cannot_be_opened_is_not_a_reason_to_revoke(
+    portal, tmp_path, monkeypatch
+):
+    """A backup or indexer tool holding the file open is not "no certificate"."""
+    fake = portal([OURS])
+    secure_store.write_json(tmp_path / "certificate.json", {"serial": OURS["serialNumber"]})
+    real = Path.read_bytes
+
+    def locked(self):
+        if self.name == "certificate.json":
+            raise PermissionError("used by another process")
+        return real(self)
+
+    monkeypatch.setattr(Path, "read_bytes", locked)
+
+    with pytest.raises(PermissionError):
+        provision._ensure_certificate(TEAM, None)
+
+    assert fake.revoked == [], "the certificate that is still good stays"
+    assert fake.issued is None
+
+
 @pytest.mark.parametrize("content", ["not json", "[1, 2]"])
 def test_a_damaged_certificate_cache_is_treated_as_missing(portal, tmp_path, content):
     portal([OURS])
