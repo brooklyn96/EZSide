@@ -31,7 +31,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from . import apps, paths
+from . import apps, paths, secure_store
 from .errors import EngineError
 
 #: Where usbmux keeps the pairing records this PC has for its devices.
@@ -327,7 +327,7 @@ def import_from(
     merged.setdefault("UDID", udid)
 
     stored = _imported_path(udid)
-    stored.write_bytes(plistlib.dumps(merged, fmt=plistlib.FMT_XML))
+    secure_store.write_bytes(stored, plistlib.dumps(merged, fmt=plistlib.FMT_XML))
     return {
         "imported": True,
         "path": str(stored),
@@ -368,7 +368,7 @@ def create_remote_pairing(
     merged = {**lockdown, **rp_keys}
     merged.setdefault("UDID", udid)
     stored = _imported_path(udid)
-    stored.write_bytes(plistlib.dumps(merged, fmt=plistlib.FMT_XML))
+    secure_store.write_bytes(stored, plistlib.dumps(merged, fmt=plistlib.FMT_XML))
     report = inspect_record(udid, lockdown_dir=directory)
     report["created"] = True
     report["path"] = str(stored)
@@ -706,7 +706,7 @@ def _read_imported(udid: str) -> dict[str, Any] | None:
     if not path.is_file():
         return None
     try:
-        parsed = plistlib.loads(path.read_bytes())
+        parsed = plistlib.loads(secure_store.read_bytes(path))
     except (OSError, ValueError):
         return None
     return parsed if isinstance(parsed, dict) else None

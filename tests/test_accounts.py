@@ -11,6 +11,9 @@ acts as the account which signed the app.
 from __future__ import annotations
 
 import json
+import os
+import sys
+import time
 
 import pytest
 
@@ -236,3 +239,189 @@ def test_the_account_slug_is_stable_and_case_insensitive():
     assert paths.account_slug(ONE) == paths.account_slug(ONE.upper())
     assert paths.account_slug(f"  {ONE} ") == paths.account_slug(ONE)
     assert paths.account_slug(ONE) != paths.account_slug(TWO)
+
+
+# --- secrets at rest -------------------------------------------------------- #
+
+def test_account_files_are_protected_and_still_load():
+    sign_in(ONE, token="very-secret-token")
+
+    raw = paths.account_file(ONE).read_bytes()
+
+    assert raw.startswith(b"EZS1")
+    assert gsa.load_session()["auth_token"] == "very-secret-token"
+    assert gsa.status()["has_auth_token"] is True
+    assert [a["email"] for a in gsa.list_accounts()] == [ONE]
+    if sys.platform == "win32":
+        assert b"very-secret-token" not in raw
+        assert ONE.encode() not in raw
+
+
+def test_the_active_pointer_stays_plain():
+    sign_in(ONE)
+    assert json.loads(paths.active_account_file().read_text(encoding="utf-8")) == {"email": ONE}
+
+
+def test_a_plaintext_account_from_an_older_build_is_read_and_protected_on_next_save():
+    path = paths.account_file(ONE)
+    path.write_text(
+        json.dumps(
+            {
+                "email": ONE,
+                "adsid": "old-adsid",
+                "GsIdmsToken": "idms",
+                "auth_token": "old-token",
+                "team_id": "TEAMONE",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert gsa.load_session(ONE)["auth_token"] == "old-token"
+    assert gsa.account_for_team("TEAMONE") == ONE
+    assert not path.read_bytes().startswith(b"EZS1"), "reading alone does not rewrite"
+
+    sign_in(ONE, token="new-token")  # the next save
+
+    assert path.read_bytes().startswith(b"EZS1")
+    assert gsa.load_session(ONE)["auth_token"] == "new-token"
+    assert gsa.account_for_team("TEAMONE") == ONE, "the team survives the rewrite"
+
+
+def test_remembering_a_team_rewrites_a_plaintext_account_protected():
+    path = paths.account_file(ONE)
+    path.write_text(
+        json.dumps({"email": ONE, "adsid": "a", "auth_token": "t"}), encoding="utf-8"
+    )
+
+    gsa.remember_team(ONE, "TEAMONE")
+
+    assert path.read_bytes().startswith(b"EZS1")
+    assert gsa.account_for_team("TEAMONE") == ONE
+
+
+def test_the_legacy_single_account_file_is_migrated_into_a_protected_file():
+    paths.legacy_account_file().write_text(
+        json.dumps({"email": ONE, "adsid": "a", "auth_token": "legacy-token"}),
+        encoding="utf-8",
+    )
+
+    assert gsa.load_session()["auth_token"] == "legacy-token"
+    assert paths.account_file(ONE).read_bytes().startswith(b"EZS1")
+
+
+# --- pending 2FA ------------------------------------------------------------ #
+
+def test_pending_2fa_is_protected_and_round_trips():
+    gsa._save_pending(ONE, "adsid", "very-secret-idms", "sms", phone_id=3)
+
+    raw = paths.pending_2fa_file().read_bytes()
+    pending = gsa._load_pending()
+
+    assert raw.startswith(b"EZS1")
+    assert pending == {
+        "email": ONE,
+        "adsid": "adsid",
+        "idms": "very-secret-idms",
+        "method": "sms",
+        "phone_id": 3,
+    }
+    if sys.platform == "win32":
+        assert b"very-secret-idms" not in raw
+
+
+def _age(path, seconds):
+    old = time.time() - seconds
+    os.utime(path, (old, old))
+
+
+def test_a_pending_sign_in_is_still_usable_within_fifteen_minutes():
+    gsa._save_pending(ONE, "adsid", "idms", "trusteddevice")
+    _age(paths.pending_2fa_file(), 14 * 60)
+
+    assert gsa._load_pending()["email"] == ONE
+
+
+def test_an_abandoned_pending_sign_in_is_ignored_and_deleted():
+    gsa._save_pending(ONE, "adsid", "idms", "trusteddevice")
+    _age(paths.pending_2fa_file(), 16 * 60)
+
+    assert gsa._load_pending() is None
+    assert not paths.pending_2fa_file().exists()
+    with pytest.raises(gsa.GsaError, match="no pending 2FA"):
+        gsa.complete_2fa(ONE, "password", "123456")
+
+
+def test_a_plaintext_pending_file_from_an_older_build_is_still_read():
+    paths.pending_2fa_file().write_text(
+        json.dumps({"email": ONE, "adsid": "a", "idms": "i", "method": "sms"}),
+        encoding="utf-8",
+    )
+
+    assert gsa._load_pending()["idms"] == "i"
+
+
+def test_an_unreadable_pending_file_counts_as_none():
+    paths.pending_2fa_file().write_bytes(b"EZS1" + b"garbage that is not a blob")
+
+    assert gsa._load_pending() is None
+    assert not paths.pending_2fa_file().exists()
+
+
+# --- signing out removes the key -------------------------------------------- #
+
+def _signing_folder(email):
+    folder = paths.signing_dir(paths.account_slug(email))
+    (folder / "identity.p12").write_bytes(b"p12")
+    (folder / "certificate.json").write_text("{}", encoding="utf-8")
+    return folder
+
+
+def test_signing_out_one_account_deletes_its_signing_folder_only():
+    sign_in(ONE)
+    sign_in(TWO)
+    one, two = _signing_folder(ONE), _signing_folder(TWO)
+
+    gsa.logout(TWO)
+
+    assert not two.exists(), "the private key must not stay behind"
+    assert one.exists()
+
+
+def test_signing_out_everyone_deletes_every_signing_folder():
+    sign_in(ONE)
+    sign_in(TWO)
+    one, two = _signing_folder(ONE), _signing_folder(TWO)
+
+    gsa.logout()
+
+    assert not one.exists() and not two.exists()
+
+
+def test_signing_out_without_a_signing_folder_still_works():
+    sign_in(ONE)
+    gsa.logout(ONE)
+    assert gsa.accounts()["accounts"] == []
+
+
+def test_a_signing_folder_that_cannot_be_deleted_keeps_the_account_signed_in(monkeypatch):
+    sign_in(ONE)
+    _signing_folder(ONE)
+
+    def locked(path, *args, **kwargs):
+        raise PermissionError("in use")
+
+    monkeypatch.setattr(gsa.shutil, "rmtree", locked)
+
+    with pytest.raises(gsa.GsaError, match="could not delete the signing key folder"):
+        gsa.logout(ONE)
+    assert [a["email"] for a in gsa.list_accounts()] == [ONE]
+
+
+def test_an_unreadable_account_file_asks_to_sign_in_again():
+    sign_in(ONE)
+    paths.account_file(ONE).write_bytes(b"EZS1" + b"garbage that is not a blob")
+
+    with pytest.raises(gsa.GsaError, match="sign in again"):
+        gsa.load_session(ONE)
+    assert gsa.list_accounts() == [], "an unreadable file is skipped, as a corrupt one always was"

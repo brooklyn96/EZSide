@@ -26,7 +26,9 @@ reaches the service. Isolation does not pass the client-token block; swapping
 the Xcode version does not pass the keep-alive block. Both are required.
 
 The password is never stored; only short-lived session tokens (adsid, IDMS
-token) are cached, under the per-user data dir, never in source control.
+token) are cached, under the per-user data dir, never in source control. The
+account files and the pending 2FA state are encrypted for the current Windows
+user (:mod:`ipaside_engine.secure_store`).
 """
 
 from __future__ import annotations
@@ -39,6 +41,8 @@ import hmac
 import json
 import plistlib
 import re
+import shutil
+import time
 from collections.abc import Iterator
 from datetime import datetime
 from typing import Any
@@ -50,7 +54,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from requests.adapters import HTTPAdapter
 
-from . import anisette, paths, tls
+from . import anisette, paths, secure_store, tls
 from .errors import EngineError
 
 # Configure the SRP library for Apple's variant (SHA-256, 2048-bit group,
@@ -764,22 +768,35 @@ def _finalize_session(email: str, spd: dict[str, Any], headers: dict[str, str]) 
 # --------------------------------------------------------------------------- #
 # Session persistence
 # --------------------------------------------------------------------------- #
+#: How long a triggered 2FA code stays usable; Apple's codes are short-lived anyway.
+_PENDING_MAX_AGE = 15 * 60
+
+
 def _save_pending(
     email: str, adsid: str, idms_token: str, method: str, *, phone_id: int = _DEFAULT_PHONE_ID
 ) -> None:
-    paths.pending_2fa_file().write_text(
-        json.dumps(
-            {"email": email, "adsid": adsid, "idms": idms_token, "method": method, "phone_id": phone_id}
-        ),
-        encoding="utf-8",
+    secure_store.write_json(
+        paths.pending_2fa_file(),
+        {"email": email, "adsid": adsid, "idms": idms_token, "method": method, "phone_id": phone_id},
     )
 
 
 def _load_pending() -> dict[str, Any] | None:
     path = paths.pending_2fa_file()
-    if not path.exists():
+    try:
+        age = time.time() - path.stat().st_mtime
+    except OSError:
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    if age > _PENDING_MAX_AGE:
+        # An abandoned sign-in must not leave its token on disk indefinitely.
+        _clear_pending()
+        return None
+    try:
+        return secure_store.read_json(path)
+    except (OSError, ValueError):
+        # Unreadable (corrupt, or protected by another Windows user): useless, so drop it.
+        _clear_pending()
+        return None
 
 
 def _clear_pending() -> None:
@@ -796,12 +813,12 @@ def _migrate_legacy_account() -> None:
     if not legacy.exists():
         return
     try:
-        data = json.loads(legacy.read_text(encoding="utf-8"))
+        data = secure_store.read_json(legacy)
         email = data.get("email")
         if email:
             target = paths.account_file(email)
             if not target.exists():
-                target.write_text(json.dumps(data), encoding="utf-8")
+                secure_store.write_json(target, data)
             _set_active(email)
     except (OSError, ValueError):
         # A corrupt legacy file is not worth failing a login over; it is about to
@@ -840,24 +857,22 @@ def _save_account(email: str, spd: dict[str, Any], app_token: dict[str, Any]) ->
     existing: dict[str, Any] = {}
     if path.exists():
         try:
-            existing = json.loads(path.read_text(encoding="utf-8"))
-        except ValueError:
+            existing = secure_store.read_json(path)
+        except (OSError, ValueError):
             existing = {}
 
-    path.write_text(
-        json.dumps(
-            {
-                # team_id is learned later, by provisioning; carry it across a
-                # re-login so refreshing an app can still find its account.
-                **{k: v for k, v in existing.items() if k == "team_id"},
-                "email": email,
-                "adsid": spd.get("adsid"),
-                "GsIdmsToken": spd.get("GsIdmsToken"),
-                "auth_token": app_token.get("token"),
-                "auth_token_expiry": app_token.get("expiry"),
-            }
-        ),
-        encoding="utf-8",
+    secure_store.write_json(
+        path,
+        {
+            # team_id is learned later, by provisioning; carry it across a
+            # re-login so refreshing an app can still find its account.
+            **{k: v for k, v in existing.items() if k == "team_id"},
+            "email": email,
+            "adsid": spd.get("adsid"),
+            "GsIdmsToken": spd.get("GsIdmsToken"),
+            "auth_token": app_token.get("token"),
+            "auth_token_expiry": app_token.get("expiry"),
+        },
     )
     _set_active(email)
 
@@ -866,7 +881,11 @@ def _read_account(email: str) -> dict[str, Any]:
     path = paths.account_file(email)
     if not path.exists():
         raise GsaError(f"{email} is not signed in.")
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return secure_store.read_json(path)
+    except (OSError, ValueError) as exc:
+        # E.g. the file was protected by another Windows user, or is corrupt.
+        raise GsaError(f"the saved session for {email} could not be read ({exc}); sign in again.") from exc
 
 
 def list_accounts() -> list[dict[str, Any]]:
@@ -874,7 +893,7 @@ def list_accounts() -> list[dict[str, Any]]:
     accounts = []
     for path in paths.accounts_dir().glob("*.json"):
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
+            data = secure_store.read_json(path)
         except (OSError, ValueError):
             continue
         if not data.get("email"):
@@ -924,13 +943,13 @@ def remember_team(email: str, team_id: str) -> None:
     if not path.exists():
         return
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except ValueError:
+        data = secure_store.read_json(path)
+    except (OSError, ValueError):
         return
     if data.get("team_id") == team_id:
         return
     data["team_id"] = team_id
-    path.write_text(json.dumps(data), encoding="utf-8")
+    secure_store.write_json(path, data)
 
 
 def account_for_team(team_id: str) -> str | None:
@@ -1078,6 +1097,20 @@ def status() -> dict[str, Any]:
     }
 
 
+def _remove_signing_material(email: str) -> None:
+    """Delete the account's signing folder so its private key does not outlive the sign-in.
+
+    Nothing is revoked at Apple; the certificate simply can no longer be used from here.
+    """
+    folder = paths.data_dir() / "signing" / paths.account_slug(email)
+    try:
+        shutil.rmtree(folder)
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        raise GsaError(f"could not delete the signing key folder {folder}: {exc}") from exc
+
+
 def logout(email: str | None = None) -> dict[str, Any]:
     """Sign out one account, or every account when [email] is omitted."""
     _migrate_legacy_account()
@@ -1086,6 +1119,7 @@ def logout(email: str | None = None) -> dict[str, Any]:
     if email is None:
         removed = [a["email"] for a in list_accounts()]
         for address in removed:
+            _remove_signing_material(address)
             paths.account_file(address).unlink(missing_ok=True)
         paths.active_account_file().unlink(missing_ok=True)
         return {"status": "signed_out", "removed": removed}
@@ -1093,6 +1127,7 @@ def logout(email: str | None = None) -> dict[str, Any]:
     path = paths.account_file(email)
     if not path.exists():
         raise GsaError(f"{email} is not signed in.")
+    _remove_signing_material(email)
     path.unlink()
     if _active_email() is None:
         paths.active_account_file().unlink(missing_ok=True)

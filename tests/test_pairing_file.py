@@ -9,6 +9,7 @@ lands on the phone.
 from __future__ import annotations
 
 import plistlib
+from pathlib import Path
 
 import pytest
 
@@ -421,3 +422,53 @@ def test_cli_pairing_flags_are_mutually_exclusive():
         ["pairing", "--deliver", "--app", "com.ipaside.escapeos.TEAM", "--udid", UDID]
     )
     assert one.pairing_app == "com.ipaside.escapeos.TEAM"
+
+
+# --- secrets at rest -------------------------------------------------------- #
+
+def test_the_stored_pairing_record_is_protected_and_still_loads(lockdown_dir, tmp_path):
+    lockdown_dir({UDID: USBMUX_RECORD})
+    source = tmp_path / "iloader.plist"
+    source.write_bytes(plistlib.dumps({**USBMUX_RECORD, **RP_KEYS, "UDID": UDID}))
+
+    result = pairing.import_from(UDID, source)
+    raw = Path(result["path"]).read_bytes()
+
+    assert raw.startswith(b"EZS1")
+    assert pairing.payload_record(UDID)["private_key"] == RP_KEYS["private_key"]
+    assert pairing.inspect_record(UDID)["source"] == "imported"
+
+
+def test_a_created_remote_pairing_is_stored_protected(lockdown_dir, monkeypatch):
+    lockdown_dir({UDID: USBMUX_RECORD})
+    monkeypatch.setattr(pairing, "_remote_pair_keys", lambda udid, serial=None: dict(RP_KEYS))
+
+    result = pairing.create_remote_pairing(UDID, UDID)
+
+    assert Path(result["path"]).read_bytes().startswith(b"EZS1")
+    assert pairing.has_rppairing_keys(pairing.payload_record(UDID)) is True
+
+
+def test_a_plain_pairing_record_from_an_older_build_is_still_read(lockdown_dir):
+    lockdown_dir({UDID: USBMUX_RECORD})
+    (pairing.pairing_dir() / f"{UDID}.plist").write_bytes(
+        plistlib.dumps({**RP_KEYS, "UDID": UDID})
+    )
+
+    record = pairing.payload_record(UDID)
+
+    assert record["identifier"] == RP_KEYS["identifier"]
+    assert pairing.inspect_record(UDID)["source"] == "imported"
+
+
+def test_exports_and_placed_files_stay_plain(lockdown_dir, tmp_path):
+    lockdown_dir({UDID: USBMUX_RECORD})
+    source = tmp_path / "iloader.plist"
+    source.write_bytes(plistlib.dumps({**USBMUX_RECORD, **RP_KEYS, "UDID": UDID}))
+    pairing.import_from(UDID, source)
+
+    destination = tmp_path / "out.plist"
+    pairing.export_to(UDID, destination)
+
+    assert not destination.read_bytes().startswith(b"EZS1")
+    assert plistlib.loads(pairing.payload_bytes(UDID))["private_key"] == RP_KEYS["private_key"]
