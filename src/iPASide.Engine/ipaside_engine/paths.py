@@ -32,11 +32,12 @@ DATA_DIR_ENV = "IPASIDE_DATA_DIR"
 
 
 def installed_app_dir() -> Path | None:
-    """The install folder when running from the installed layout, else None.
+    """The program folder when running from the installed layout, else None.
 
-    The installer ships the engine as ``<app>\\engine\\python\\python.exe``; the
-    interpreter (or, failing that, the package inside its site-packages) tells us
-    where ``<app>`` is, wherever the user chose to install it.
+    The installer ships the engine as ``<install>\\app\\engine\\python\\python.exe``;
+    the interpreter (or, failing that, the package inside its site-packages) tells
+    us where ``<install>\\app`` is, wherever the user chose to install it. The data
+    folder is its sibling, ``<install>\\data``.
     """
     for folder in (Path(sys.executable).parent, *resource_dir().parents):
         if (
@@ -51,16 +52,17 @@ def installed_app_dir() -> Path | None:
 def data_dir() -> Path:
     """Application data directory (created if missing).
 
-    In order: ``IPASIDE_DATA_DIR``; ``<install folder>\\data`` for an installed
-    copy, so the install folder holds everything EZSide writes; otherwise the
-    per-user default (``%LOCALAPPDATA%\\EZSide``). The app resolves the same order
-    and passes its answer down, so the two can never disagree.
+    In order: ``IPASIDE_DATA_DIR`` (made absolute when relative);
+    ``<install folder>\\data`` for an installed copy, next to the program folder
+    ``<install folder>\\app``, so the install folder holds everything EZSide writes;
+    otherwise the per-user default (``%LOCALAPPDATA%\\EZSide``). The app resolves the
+    same order and passes its answer down, so the two can never disagree.
     """
     override = os.environ.get(DATA_DIR_ENV, "").strip()
     if override:
-        path = Path(override)
+        path = Path(override).absolute()
     elif (app_dir := installed_app_dir()) is not None:
-        path = app_dir / "data"
+        path = app_dir.parent / "data"
     else:
         base = os.environ.get("LOCALAPPDATA") or os.path.join(
             os.path.expanduser("~"), ".local", "share"

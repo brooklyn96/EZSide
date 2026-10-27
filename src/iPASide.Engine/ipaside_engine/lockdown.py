@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
+from . import paths
 from ._asyncutil import maybe_await
 from .errors import EngineError
 
@@ -64,11 +65,19 @@ async def create(serial: str | None = None, prefer_usb: bool = True) -> Any:
         # USB first: on the test device a lockdown value read took 132ms over USB
         # against 575ms over the network, and it is the more reliable for installs.
         attempts = ("USB", None) if prefer_usb else (None,)
+    # Keep pymobiledevice3's pair records under the data folder, not in
+    # %USERPROFILE%\.pymobiledevice3 on the system drive.
+    records = paths.data_dir() / "lockdown"
+    records.mkdir(parents=True, exist_ok=True)
     last: Exception | None = None
     for connection_type in attempts:
         try:
             return await maybe_await(
-                create_using_usbmux(serial=serial, connection_type=connection_type)
+                create_using_usbmux(
+                    serial=serial,
+                    connection_type=connection_type,
+                    pairing_records_cache_folder=records,
+                )
             )
         except Exception as exc:  # this transport is unavailable - try the next
             last = exc

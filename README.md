@@ -5,7 +5,9 @@ pwnapplehat (MIT License), maintained here. It installs and runs next to iPASide
 without sharing anything with it: its own app, its own data folder, its own updates.
 
 - **Download:** [latest release](https://github.com/brooklyn96/EZSide/releases/latest)
-- **Data folder:** `%LOCALAPPDATA%\EZSide`
+- **Data folder:** `<install folder>\data` (dev runs: `%LOCALAPPDATA%\EZSide`); the
+  program is in `<install folder>\app`. To move an install, uninstall and keep the
+  data, install into the new folder, then copy the old `data\` folder into it.
 - **License:** MIT, see [LICENSE](LICENSE). Upstream details are in [UPSTREAM.md](UPSTREAM.md).
 
 The text below is the upstream iPASide README.

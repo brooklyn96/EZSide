@@ -88,9 +88,12 @@ class UpdateService {
     String executable,
     List<String> arguments,
   ) async {
+    // The app's own cwd is its program folder and a child inherits it; a process
+    // with its cwd inside {app}/app blocks Setup's move-aside of that folder.
     await Process.start(
       executable,
       arguments,
+      workingDirectory: File(executable).parent.path,
       mode: ProcessStartMode.detached,
     );
   }

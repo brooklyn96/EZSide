@@ -9,8 +9,11 @@ from ipaside_engine import paths
 
 
 def _fake_install(root: Path) -> Path:
-    """Lay out ``<root>/engine/python/python.exe``; return the interpreter path."""
-    exe = root / "engine" / "python" / "python.exe"
+    """Lay out ``<root>/app/engine/python/python.exe``; return the interpreter path.
+
+    ``root`` is the install folder: ``app`` holds the program, ``data`` is its sibling.
+    """
+    exe = root / "app" / "engine" / "python" / "python.exe"
     exe.parent.mkdir(parents=True)
     exe.write_bytes(b"")
     return exe
@@ -34,8 +37,10 @@ def test_installed_layout_uses_data_next_to_the_program(
     app = tmp_path / "D" / "EZSide"
     monkeypatch.setattr(sys, "executable", str(_fake_install(app)))
 
+    assert paths.installed_app_dir() == app / "app"
     assert paths.data_dir() == app / "data"
     assert (app / "data").is_dir()
+    assert not (app / "app" / "data").exists()
     assert not (isolated_data / "EZSide").exists()
 
 
@@ -47,7 +52,7 @@ def test_installed_layout_is_found_from_the_package_when_executable_is_unhelpful
     monkeypatch.setattr(sys, "executable", "")
     monkeypatch.setattr(
         paths, "resource_dir",
-        lambda: app / "engine" / "python" / "Lib" / "site-packages" / "ipaside_engine",
+        lambda: app / "app" / "engine" / "python" / "Lib" / "site-packages" / "ipaside_engine",
     )
 
     assert paths.data_dir() == app / "data"
@@ -63,6 +68,14 @@ def test_env_override_beats_the_installed_layout(not_installed, monkeypatch, tmp
     assert paths.installs_file() == custom / "sideloads.json"
 
 
+def test_relative_env_override_is_made_absolute(not_installed, monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv(paths.DATA_DIR_ENV, "rel-data")
+
+    assert paths.data_dir() == tmp_path / "rel-data"
+    assert paths.data_dir().is_absolute()
+
+
 def test_blank_env_override_is_ignored(not_installed, monkeypatch, isolated_data):
     monkeypatch.setenv(paths.DATA_DIR_ENV, "   ")
 
@@ -72,9 +85,10 @@ def test_blank_env_override_is_ignored(not_installed, monkeypatch, isolated_data
 def test_a_python_folder_without_the_interpreter_is_not_an_install(
     not_installed, monkeypatch, tmp_path, isolated_data
 ):
-    (tmp_path / "EZSide" / "engine" / "python").mkdir(parents=True)
+    (tmp_path / "EZSide" / "app" / "engine" / "python").mkdir(parents=True)
     monkeypatch.setattr(
-        sys, "executable", str(tmp_path / "EZSide" / "engine" / "python" / "python.exe")
+        sys, "executable",
+        str(tmp_path / "EZSide" / "app" / "engine" / "python" / "python.exe"),
     )
 
     assert paths.installed_app_dir() is None

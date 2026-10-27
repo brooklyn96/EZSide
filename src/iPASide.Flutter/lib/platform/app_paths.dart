@@ -30,10 +30,11 @@ const String dataDirEnvVar = 'IPASIDE_DATA_DIR';
 
 /// Well-known data locations. Resolved in this order:
 ///
-/// 1. `IPASIDE_DATA_DIR`, when set.
-/// 2. `<folder of the app exe>\data`, when the installed engine sits next to
-///    the exe (`engine\python\python.exe`), so an installed copy keeps all of
-///    its data inside the folder the user chose to install it in.
+/// 1. `IPASIDE_DATA_DIR`, when set (made absolute when relative).
+/// 2. `<install folder>\data`, when the installed engine sits next to the exe
+///    (`<install folder>\app\engine\python\python.exe`): the program lives in
+///    `<install folder>\app` and its data in the sibling `data`, so an installed
+///    copy keeps all of its data inside the folder the user chose to install it in.
 /// 3. `%LOCALAPPDATA%\EZSide` on Windows and the platform-native per-user data
 ///    directory elsewhere (development and test runs).
 ///
@@ -85,7 +86,7 @@ class AppPaths {
     String? executablePath,
   }) {
     final String? explicit = _nonEmpty(environment[dataDirEnvVar]);
-    if (explicit != null) return explicit.trim();
+    if (explicit != null) return Directory(explicit.trim()).absolute.path;
 
     final AppDataHost family = host ?? AppDataHost.current;
     if (executablePath != null && family == AppDataHost.windows) {
@@ -94,7 +95,9 @@ class AppPaths {
         _join(_join(appDir, 'engine'), 'python'),
         'python.exe',
       );
-      if (File(python).existsSync()) return _join(appDir, 'data');
+      if (File(python).existsSync()) {
+        return _join(Directory(appDir).parent.path, 'data');
+      }
     }
 
     final String? dataHome = switch (family) {

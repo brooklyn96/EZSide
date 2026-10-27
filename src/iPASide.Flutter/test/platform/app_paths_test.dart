@@ -112,11 +112,11 @@ void main() {
     });
     tearDown(() => install.deleteSync(recursive: true));
 
-    String exe() => _join(<String>[install.path, 'EZSide.exe']);
+    String exe() => _join(<String>[install.path, 'app', 'EZSide.exe']);
 
     void installEngine() {
       File(
-        _join(<String>[install.path, 'engine', 'python', 'python.exe']),
+        _join(<String>[install.path, 'app', 'engine', 'python', 'python.exe']),
       ).createSync(recursive: true);
     }
 
@@ -143,6 +143,16 @@ void main() {
       );
     });
 
+    test('a relative IPASIDE_DATA_DIR is made absolute', () {
+      final String root = resolve(<String, String>{
+        ...userEnv,
+        'IPASIDE_DATA_DIR': 'rel-data',
+      });
+
+      expect(root, Directory('rel-data').absolute.path);
+      expect(Directory(root).isAbsolute, isTrue);
+    });
+
     test('a blank IPASIDE_DATA_DIR is ignored', () {
       expect(
         resolve(<String, String>{...userEnv, 'IPASIDE_DATA_DIR': '  '}),
@@ -150,7 +160,7 @@ void main() {
       );
     });
 
-    test('an installed engine next to the exe puts data in <app>/data', () {
+    test('an installed engine next to the exe puts data in <install>/data', () {
       installEngine();
 
       expect(

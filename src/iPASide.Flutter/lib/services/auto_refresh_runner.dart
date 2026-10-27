@@ -76,6 +76,7 @@ abstract final class AutoRefreshRunner {
           ? EngineClient(
               locator: EngineLocator(),
               reaper: createChildProcessReaper(),
+              paths: appPaths,
             )
           : null;
       try {

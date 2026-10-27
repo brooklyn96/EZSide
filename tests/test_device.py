@@ -103,7 +103,7 @@ def test_lockdown_hands_usbmux_a_resolved_udid_not_a_blank(fake_devices, monkeyp
     ])
     seen = {}
 
-    def fake_create(serial=None, connection_type=None):
+    def fake_create(serial=None, connection_type=None, **kwargs):
         seen["serial"] = serial
         seen["connection_type"] = connection_type
         return "client"
@@ -112,6 +112,27 @@ def test_lockdown_hands_usbmux_a_resolved_udid_not_a_blank(fake_devices, monkeyp
 
     assert asyncio.run(lockdown.create()) == "client"
     assert seen == {"serial": UDID, "connection_type": "USB"}
+
+
+def test_lockdown_keeps_pair_records_under_the_data_folder(fake_devices, monkeypatch):
+    # pymobiledevice3 defaults to %USERPROFILE%\.pymobiledevice3 on the system drive;
+    # EZSide keeps everything it writes under the data folder instead.
+    from pymobiledevice3 import lockdown as pymobiledevice3_lockdown
+
+    from ipaside_engine import paths
+
+    fake_devices([{"serial": UDID, "connection_type": "USB"}])
+    seen = {}
+
+    def fake_create(serial=None, connection_type=None, pairing_records_cache_folder=None):
+        seen["folder"] = pairing_records_cache_folder
+        return "client"
+
+    monkeypatch.setattr(pymobiledevice3_lockdown, "create_using_usbmux", fake_create)
+
+    asyncio.run(lockdown.create())
+    assert seen["folder"] == paths.data_dir() / "lockdown"
+    assert seen["folder"].is_dir()
 
 
 def test_lockdown_refuses_to_connect_to_one_of_two_phones(fake_devices):

@@ -49,15 +49,11 @@ SolidCompression=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=lowest
-; `commandline`, not `dialog`. With `dialog` a genuinely fresh install opens on Inno's
-; stock "Select Setup Install Mode" task dialog — asking all-users or just-me before the
-; branded welcome page is even shown, and undoing the one-screen flow. EZSide is a
-; per-user tool throughout: per-user data, a per-user scheduled task, a per-user Apple ID
-; session. So there is no answer worth asking for, and /ALLUSERS still works for anyone
-; who deliberately wants it.
-PrivilegesRequiredOverridesAllowed=commandline
-UninstallDisplayIcon={app}\{#AppExe}
+UninstallDisplayIcon={app}\app\{#AppExe}
 UninstallDisplayName={#AppName}
+; unins000.exe/.dat live in the program folder, so they move aside and come back with it
+; during an upgrade, exactly as the rollback code below assumes.
+UninstallFilesDir={app}\app
 AppMutex=EZSide.Running.Mutex
 ; The wizard and Add/Remove entry use the same mark as the app itself.
 SetupIconFile=..\src\iPASide.Flutter\windows\runner\resources\app_icon.ico
@@ -69,15 +65,20 @@ SetupIconFile=..\src\iPASide.Flutter\windows\runner\resources\app_icon.ico
 ; progress, then done.
 ;
 ; No LicenseFile: MIT grants its rights without acceptance, so a click-through gate
-; would be theatre. LICENSE still ships in {app}, which is what MIT actually asks for.
+; would be theatre. LICENSE still ships in {app}\app, which is what MIT actually asks for.
 DisableReadyPage=yes
-; The folder page stays, because the install folder is also the data folder (see
-; {app}\data in the [Code] notes): it is how the user keeps EZSide off a nearly full
-; system drive, e.g. D:\EZSide. Per-user (PrivilegesRequired=lowest), so any folder the
-; user can write to works without admin; the {autopf} default resolves under
-; LocalAppData\Programs. UsePreviousAppDir is left at its default (yes), so an upgrade
-; reuses the folder chosen the first time. /DIR= still works too.
-DisableDirPage=no
+; The install folder holds the program in {app}\app and everything EZSide writes in
+; {app}\data (see the [Code] notes), so picking it is how the user keeps EZSide off a
+; nearly full system drive, e.g. D:\EZSide. Per-user (PrivilegesRequired=lowest), so any
+; folder the user can write to works without admin; the {autopf} default resolves to the
+; per-user Programs folder. The folder is chosen on the first install only: `auto` hides the
+; page once an install is registered, and UsePreviousAppDir (default yes) makes every
+; upgrade, the in-app updater's included, reuse it. To move an install: uninstall and
+; keep the data, install into the new folder, then copy data\ there.
+DisableDirPage=auto
+; The folder checks in [Code] (NextButtonClick, PrepareToInstall) replace Inno's stock
+; "folder already exists" prompt.
+DirExistsWarning=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -102,67 +103,31 @@ ClickFinish=Click Finish to close Setup.
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [InstallDelete]
-; Wipe any previous engine (e.g. the old PyInstaller build) so an in-place
-; upgrade never keeps stale engine files around. Also remove earlier app
-; layouts - the WPF/WebView2 "web" folder, the .NET payload, and the Flutter
-; runner's assets (flutter_assets, app.so, icudtl.dat) which are keyed by name and
-; would otherwise go stale.
-; Safe because [Files] re-copies the whole publish\app payload.
-;
-; {app}\data is the user's data folder AND where the Flutter runner keeps those three
-; assets, so it must never be deleted wholesale here - only the three runner items.
-;
-; These rules run AFTER CurStepChanged(ssInstall) - verified, not assumed - so on an
-; upgrade the rollback code below has already renamed {app} out of the way and every
-; rule here matches nothing. They stay load-bearing for the two cases where it has
-; not: a first install over a leftover folder, and an upgrade where the rename failed
-; because something held a file open.
-Type: filesandordirs; Name: "{app}\engine"
-Type: filesandordirs; Name: "{app}\web"
-Type: filesandordirs; Name: "{app}\data\flutter_assets"
-Type: files; Name: "{app}\data\app.so"
-Type: files; Name: "{app}\data\icudtl.dat"
-Type: files; Name: "{app}\*.dll"
-Type: files; Name: "{app}\*.exe"
-Type: files; Name: "{app}\*.json"
-Type: files; Name: "{app}\*.pdb"
-Type: files; Name: "{app}\*.xml"
-; .NET shipped a runtimes folder and one satellite-resource folder per language.
-; Nothing in the Flutter payload recreates these, so without naming them an
-; upgrade from an older EZSide leaves ~50 MB of dead files behind.
-Type: filesandordirs; Name: "{app}\runtimes"
-Type: filesandordirs; Name: "{app}\cs"
-Type: filesandordirs; Name: "{app}\de"
-Type: filesandordirs; Name: "{app}\es"
-Type: filesandordirs; Name: "{app}\fr"
-Type: filesandordirs; Name: "{app}\it"
-Type: filesandordirs; Name: "{app}\ja"
-Type: filesandordirs; Name: "{app}\ko"
-Type: filesandordirs; Name: "{app}\pl"
-Type: filesandordirs; Name: "{app}\pt-BR"
-Type: filesandordirs; Name: "{app}\ru"
-Type: filesandordirs; Name: "{app}\tr"
-Type: filesandordirs; Name: "{app}\zh-Hans"
-Type: filesandordirs; Name: "{app}\zh-Hant"
+; The program folder is installer-owned by construction: nothing but Setup (and Python's
+; own __pycache__) writes there. This runs after CurStepChanged(ssInstall), so after a
+; successful move-aside it matches nothing; otherwise it clears a leftover, half-written
+; or lock-blocked copy before [Files] writes a fresh one. PrepareToInstall has already
+; made sure {app} is EZSide's own folder or an empty one. {app}\data is never touched.
+Type: filesandordirs; Name: "{app}\app"
 
 [Files]
-Source: "..\publish\app\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
-Source: "..\dist\engine\*"; DestDir: "{app}\engine"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "..\publish\app\*"; DestDir: "{app}\app"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "..\dist\engine\*"; DestDir: "{app}\app\engine"; Flags: recursesubdirs createallsubdirs ignoreversion
 ; Not installed — extracted to {tmp} at runtime to stand in for the native progress
 ; bar, which cannot be recoloured. See CreateProgressBar.
 Source: "brand\bar-track.png"; Flags: dontcopy
 Source: "brand\bar-fill.png"; Flags: dontcopy
 
 [Icons]
-Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
+Name: "{group}\{#AppName}"; Filename: "{app}\app\{#AppExe}"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\app\{#AppExe}"; Tasks: desktopicon
 
 [Run]
 ; Check: never offer to start a payload that just failed to run. After a rolled-back
 ; upgrade the restored older EZSide is fine to launch; a damaged one is not.
 ; No skipifsilent: the in-app updater installs with /SILENT and the user expects the
 ; app to come back afterwards (the update flow closes it so Setup can swap files).
-Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall; Check: InstalledAppIsUsable
+Filename: "{app}\app\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall; Check: InstalledAppIsUsable
 
 [Code]
 // ── Transactional upgrade: move aside, verify, then commit ────────────────────────
@@ -171,26 +136,25 @@ Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags
 // broken - the user is left with a folder that looks installed but cannot sign
 // anything, and no route back. So an upgrade is staged instead of applied blind:
 //
-//   ssInstall      If a previous install is present, RENAME {app} aside. A rename
-//                  within one volume only rewrites directory metadata, so it costs
-//                  milliseconds where copying 215 MB aside would cost minutes. Inno
-//                  then installs into a clean, empty {app}.
+//   ssInstall      If a previous install is present, RENAME the program folder
+//                  {app}\app aside to {app}\app.rollback. A rename within one volume
+//                  only rewrites directory metadata, so it costs milliseconds where
+//                  copying 215 MB aside would cost minutes. Inno then installs into a
+//                  clean, empty {app}\app.
 //   ssPostInstall  PROVE the new payload runs, then either discard the backup or put
 //                  it back under its own name.
 //
 // A first install has nothing to move aside and nothing to fall back to, so it passes
 // through here untouched.
 //
-// The user's data - the Apple ID session, the signing certificate and private key, the
-// anisette state and the sideload registry - lives in {app}\data, inside the folder the
-// user chose to install into (the Flutter runner keeps its own assets in that same
-// folder, see IsRunnerAsset). Renaming {app} would carry that data into the backup, and
-// deleting the backup would then delete it. So the data is lifted out of the way
-// explicitly: MoveUserData puts everything in {app}\data except the runner's own assets
-// into the fresh {app}\data right after the rename, and RestorePreviousInstall puts it
-// back before a rollback. The backup never holds user data once staging has succeeded,
-// so discarding it is always safe. If the data cannot be moved, nothing is staged.
-// Setup itself only appends to {app}\data\install.log.
+// The folder the user picks ({app}, e.g. D:\EZSide) holds exactly two things: {app}\app,
+// the program (exe, dlls, the Flutter runner's own data\ assets, the engine, unins*.*),
+// and {app}\data, every byte EZSide writes - the Apple ID session, the signing
+// certificate and private key, the anisette state, the sideload registry, install.log.
+// Only {app}\app ever moves or is deleted here. Setup never moves, renames or deletes
+// anything in {app}\data; it only appends to {app}\data\install.log. So no failure path
+// below - verify failure, cancel, kill, power loss, a locked file, a failed restore - can
+// touch the user's data; the worst any of them leaves is a stale app.rollback folder.
 //
 // One measured limit to know before rearranging this: by the time Setup reaches
 // ssPostInstall the install is already committed as far as Inno is concerned. Raising
@@ -207,9 +171,6 @@ var
   // payload verified or successfully put back. Until then the backup is still the only
   // complete copy of a working EZSide, and DeinitializeSetup will restore it.
   UpgradeSettled: Boolean;
-  // True when staging left user data in the backup that could not be moved out. The
-  // backup is then never discarded, however well the new payload verifies.
-  BackupHoldsData: Boolean;
   PreviousVersion: String;
   // Non-empty once the new payload has failed to verify; drives the final page.
   FailureHeading: String;
@@ -299,25 +260,31 @@ begin
   FinePrint.WordWrap := True;
 end;
 
+// The program folder: the only tree Setup moves aside, restores or deletes.
 function AppDir: String;
 begin
-  Result := ExpandConstant('{app}');
+  Result := ExpandConstant('{app}\app');
+end;
+
+// Everything EZSide writes. Never an operand of a rename or a delete in this script.
+function DataDir: String;
+begin
+  Result := ExpandConstant('{app}\data');
 end;
 
 function BackupDir: String;
 begin
-  // A sibling of {app}, so the backup is guaranteed to be on the same volume and the
-  // move stays a rename. Anywhere else - {tmp}, another drive - risks a cross-volume
-  // move, which Windows quietly turns into a full byte-for-byte copy.
+  // A sibling of the program folder, so the backup is guaranteed to be on the same
+  // volume and the move stays a rename. Anywhere else - {tmp}, another drive - risks a
+  // cross-volume move, which Windows quietly turns into a full byte-for-byte copy.
   Result := AppDir + '.rollback';
 end;
 
 function InstallLogPath: String;
 begin
-  // {app}\data\install.log: with the install folder holding everything EZSide writes,
-  // the log belongs next to the rest of the data. It is an ordinary user-data file, so
-  // MoveUserData carries it across the rename-aside like everything else in that folder.
-  Result := AddBackslash(AppDir) + 'data\install.log';
+  // Next to the rest of the data, outside the folder that is renamed away, replaced and
+  // sometimes deleted while this log is being written.
+  Result := AddBackslash(DataDir) + 'install.log';
 end;
 
 procedure LogInstall(Msg: String);
@@ -326,12 +293,8 @@ var
   Line: String;
 begin
   Log(Msg);  // also into Setup's own /LOG file, when one was asked for
-  // While {app} is renamed away it must not be re-created by a log write: that would
-  // block the rename back. Setup's own /LOG file still has the line.
-  if BackupTaken and not DirExists(AppDir) then
-    Exit;
   Line := '[' + GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + '] {#AppVersion}: ' + Msg;
-  ForceDirectories(ExtractFilePath(InstallLogPath));
+  ForceDirectories(DataDir);
   if LoadStringFromFile(InstallLogPath, Existing) then
     SaveStringToFile(InstallLogPath, Existing + Line + #13#10, False)
   else
@@ -350,74 +313,43 @@ end;
 function LooksLikeOurInstall(Dir: String): Boolean;
 begin
   Result := (Length(Dir) > 3) and DirExists(Dir)
-        and (FileExists(AddBackslash(Dir) + '{#AppExe}')
-          or FileExists(AddBackslash(Dir) + 'unins000.exe'));
+        and FileExists(AddBackslash(Dir) + '{#AppExe}');
 end;
 
-// The install folder is now user-chosen, so Setup must not treat "a folder that already
-// exists" as "a folder that is ours": picking D:\Tools would otherwise let the
-// [InstallDelete] wildcards remove that folder's own dlls and exes. A folder is fine when
-// it is empty, already an EZSide install, or holds nothing but a data folder left by an
-// earlier uninstall that kept the user's data.
-function FolderHoldsForeignFiles(Dir: String): Boolean;
+function DirIsEmpty(Dir: String): Boolean;
 var
   FindRec: TFindRec;
 begin
-  Result := False;
+  Result := True;
   if FindFirst(AddBackslash(Dir) + '*', FindRec) then
   try
     repeat
-      if (FindRec.Name <> '.') and (FindRec.Name <> '..')
-         and (CompareText(FindRec.Name, 'data') <> 0) then
-        Result := True;
-    until Result or not FindNext(FindRec);
+      if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+        Result := False;
+    until (not Result) or not FindNext(FindRec);
   finally
     FindClose(FindRec);
   end;
 end;
 
-// The Flutter runner keeps flutter_assets, app.so and icudtl.dat in {app}\data, the same
-// folder the user's data lives in. These three belong to the installer: [Files] replaces
-// them, so they never need to survive an upgrade.
-function IsRunnerAsset(Name: String): Boolean;
+// The install folder is user-chosen, so Setup must not treat "a folder that already
+// exists" as "a folder that is ours": picking D:\Tools must not let [InstallDelete] clear
+// a D:\Tools\app that belongs to something else. A folder is fine when it does not exist,
+// is empty, or is EZSide's own: a registered install (app\EZSide.exe), an interrupted
+// upgrade (app.rollback\EZSide.exe), or a killed first install or an uninstall that kept
+// the data (data\install.log, written at ssInstall before any file is copied).
+function AcceptableInstallRoot(Dir: String): Boolean;
 begin
-  Result := (CompareText(Name, 'flutter_assets') = 0) or (CompareText(Name, 'app.so') = 0)
-         or (CompareText(Name, 'icudtl.dat') = 0);
+  Result := not DirExists(Dir) or DirIsEmpty(Dir)
+         or FileExists(AddBackslash(Dir) + 'app\{#AppExe}')
+         or FileExists(AddBackslash(Dir) + 'app.rollback\{#AppExe}')
+         or FileExists(AddBackslash(Dir) + 'data\install.log');
 end;
 
-// Move everything in <FromApp>\data except the runner's assets to <ToApp>\data. Both
-// folders are on one volume (the backup is a sibling of {app}), so each move is a
-// rename. All-or-report: False when any item would not move, and the caller undoes the
-// staging. Only Log() here, never LogInstall: install.log is one of the files in motion.
-function MoveUserData(FromApp, ToApp: String): Boolean;
-var
-  FindRec: TFindRec;
-  Source, Target: String;
+function ForeignFolderMessage: String;
 begin
-  Result := True;
-  Source := AddBackslash(FromApp) + 'data\';
-  Target := AddBackslash(ToApp) + 'data\';
-  if not DirExists(Source) then
-    Exit;
-  if not ForceDirectories(Target) then
-  begin
-    Log('could not create ' + Target);
-    Result := False;
-    Exit;
-  end;
-  if FindFirst(Source + '*', FindRec) then
-  try
-    repeat
-      if (FindRec.Name <> '.') and (FindRec.Name <> '..') and not IsRunnerAsset(FindRec.Name) then
-        if not RenameFile(Source + FindRec.Name, Target + FindRec.Name) then
-        begin
-          Log('could not move ' + Source + FindRec.Name + ' to ' + Target);
-          Result := False;
-        end;
-    until not FindNext(FindRec);
-  finally
-    FindClose(FindRec);
-  end;
+  Result := 'That folder already has other files in it. Pick an empty folder or one that'
+    + ' does not exist yet, for example D:\EZSide.';
 end;
 
 // "The exe is there" is not proof of a working install. The engine is ~10,000 files of
@@ -457,7 +389,7 @@ begin
   Probe := ExpandConstant('{tmp}\engine-verify.txt');
   DeleteFile(Probe);
   if not Exec(ExpandConstant('{cmd}'),
-              '/c "set "IPASIDE_DATA_DIR=' + AddBackslash(AppDir) + 'data" && "' + Engine
+              '/c "set "IPASIDE_DATA_DIR=' + DataDir + '" && "' + Engine
                 + '" -m ipaside_engine version > "' + Probe + '" 2>&1"',
               AppDir, SW_HIDE, ewWaitUntilTerminated, ResultCode) then
   begin
@@ -477,21 +409,14 @@ begin
     LogInstall('verify: engine exited ' + IntToStr(ResultCode) + ' - ' + Detail);
 end;
 
-// Put the moved-aside install back under its own name. Shared by the ways an upgrade can
-// go wrong: the new payload failing to verify, Setup never getting that far, and the
-// user data refusing to move during staging.
+// Put the moved-aside install back under its own name. Shared by the two ways an upgrade
+// can go wrong: the new payload failing to verify, and Setup never getting that far.
 function RestorePreviousInstall: Boolean;
 begin
-  // The user's data goes home first. If any of it will not move, stop here: deleting the
-  // new {app} below would delete that data with it, and the backup is still intact.
-  Result := MoveUserData(AppDir, BackupDir);
-  if not Result then
-    Exit;
-
   // Order matters: RenameFile cannot land on a directory that already exists, so the new
   // (or half-written) payload has to be gone before the backup can take its name back.
-  // Whatever is in {app} now was put there by this Setup run: BackupTaken means it is
-  // the folder this run renamed away, and the user data has just been taken out of it.
+  // Whatever is in the program folder now was put there by this Setup run: BackupTaken
+  // means the folder that was there before has been renamed away. It holds no user data.
   if DirExists(AppDir) and (Length(AppDir) > 3) then
     DelTree(AppDir, True, True, True);
 
@@ -508,9 +433,35 @@ end;
 
 procedure StageUpgrade;
 begin
+  // A backup still here at ssInstall means an earlier run died between moving the
+  // program folder aside and discarding the backup, or could not discard it. Which
+  // of the two folders is the working EZSide is not guessed: the one in place is
+  // asked to prove itself exactly as a fresh payload is; if it cannot, the backup -
+  // the last version known to work - takes its name back, and this run upgrades
+  // from it with rollback protection. A backup without EZSide.exe is debris of an
+  // interrupted delete.
+  if LooksLikeOurInstall(BackupDir) then
+  begin
+    if NewInstallAnswers then
+    begin
+      LogInstall('the install in place works; discarding a rollback backup left behind by an earlier run');
+      DelTree(BackupDir, True, True, True);
+    end
+    else
+    begin
+      if DirExists(AppDir) then DelTree(AppDir, True, True, True);
+      if RenameFile(BackupDir, AppDir) then
+        LogInstall('recovered the previous install from ' + BackupDir)
+      else
+        LogInstall('could not put the previous install back from ' + BackupDir + ' - leaving it there');
+    end;
+  end
+  else if DirExists(BackupDir) then
+    DelTree(BackupDir, True, True, True);
+
   // No EZSide.exe means there is nothing to fall back to: a first install, or a
-  // directory some earlier run left half-written. Both install straight in, and the
-  // [InstallDelete] rules clear out whatever old layout is lying there.
+  // directory some earlier run left half-written. Both install straight in, and
+  // [InstallDelete] clears whatever is lying in the program folder.
   if not FileExists(AddBackslash(AppDir) + '{#AppExe}') then
   begin
     LogInstall('first install into ' + AppDir);
@@ -522,57 +473,22 @@ begin
   // being the old ones again.
   RegQueryStringValue(HKEY_CURRENT_USER, UninstallKey, 'DisplayVersion', PreviousVersion);
 
-  // A backup left behind by a run that died between the move and the verify. The
-  // payload about to be copied supersedes it, so now it is only in the way. Unless that
-  // run died before it moved the user's data out: whatever data the backup still holds
-  // is taken back first, and if any of it will not move the backup is left alone (the
-  // rename below then fails and this becomes an install without rollback protection).
-  if LooksLikeOurInstall(BackupDir) then
-  begin
-    if MoveUserData(BackupDir, AppDir) then
-    begin
-      LogInstall('discarding a rollback backup left behind by an earlier run');
-      DelTree(BackupDir, True, True, True);
-    end
-    else
-      LogInstall('a rollback backup from an earlier run still holds user data that could'
-        + ' not be moved out - leaving it in place: ' + BackupDir);
-  end;
-
   // AppMutex has already turned the install away if EZSide itself is running, but a
-  // resident engine process, an antivirus scan or an open Explorer window can still
-  // hold a handle, and then this fails. A missing safety net is not worth failing an
+  // resident engine process, an antivirus scan, an open Explorer window or a console
+  // whose current directory is inside the program folder can still hold a handle, and
+  // then this fails. So does a backup from an earlier run that could not be cleared
+  // above (the target name is taken). A missing safety net is not worth failing an
   // otherwise fine upgrade over, so record it and continue without one.
   if RenameFile(AppDir, BackupDir) then
   begin
     BackupTaken := True;
-    // Straight away, before anything is logged: the user's data was inside the folder
-    // that has just moved, and install.log is part of it.
-    if MoveUserData(BackupDir, AppDir) then
-      LogInstall('upgrade from version ' + PreviousVersion + ': previous install moved to '
-        + BackupDir)
-    else if RestorePreviousInstall then
-    begin
-      // The data would not move, so the backup cannot be trusted to be discardable.
-      // Put everything back as it was and install over it, like the case above.
-      BackupTaken := False;
-      LogInstall('upgrade from version ' + PreviousVersion + ': could not move the data'
-        + ' folder aside (a file is in use) - installing in place, WITHOUT rollback'
-        + ' protection');
-    end
-    else
-    begin
-      // BackupTaken stays True so DeinitializeSetup gets another go at the restore, and
-      // BackupHoldsData keeps the backup from being discarded if the install goes on.
-      BackupHoldsData := True;
-      LogInstall('upgrade from version ' + PreviousVersion + ': could not move the data'
-        + ' folder aside and could not put the previous install back');
-    end;
+    LogInstall('upgrade from version ' + PreviousVersion + ': previous install moved to '
+      + BackupDir);
   end
   else
     LogInstall('upgrade from version ' + PreviousVersion + ': could not move the previous'
-      + ' install aside (a file is in use) - installing in place, WITHOUT rollback'
-      + ' protection');
+      + ' install aside (a file is in use, or an older backup could not be cleared) -'
+      + ' installing in place, WITHOUT rollback protection');
 end;
 
 procedure RollBackUpgrade;
@@ -593,17 +509,19 @@ begin
   end
   else
   begin
-    // Nothing is lost - the backup is intact and the data folder is untouched or whole -
-    // but only the user can free whatever is holding a folder open. Name the backup so
-    // the recovery is a rename. UpgradeSettled stays False on purpose: DeinitializeSetup
-    // gets one more attempt once Setup has let go of everything it had open.
+    // Both trees still exist, so nothing is lost - but the program folder is empty and
+    // only the user can free whatever is holding it. Name the folder so the recovery is
+    // a rename. UpgradeSettled stays False on purpose: DeinitializeSetup gets one more
+    // attempt once Setup has let go of everything it had open. The next Setup run also
+    // puts the backup back on its own (StageUpgrade).
     AppUsable := False;
     LogInstall('ROLLBACK FAILED: ' + BackupDir + ' could not be moved back to ' + AppDir);
     FailureHeading := 'EZSide is not installed';
     FailureDetail :=
-      'The previous version could not be moved back - something on this PC is holding a'
-      + ' folder open. Nothing was lost; it is intact at' + #13#10 + BackupDir
-      + #13#10#13#10 + 'Restart Windows and run Setup again.';
+      'The new files were removed, but the previous version could not be moved back -'
+      + ' something on this PC is holding that folder open. Nothing was lost; it is intact'
+      + ' at' + #13#10 + BackupDir + #13#10#13#10
+      + 'Restart Windows and run Setup again.';
   end;
 end;
 
@@ -613,7 +531,6 @@ begin
   begin
     BackupTaken := False;
     UpgradeSettled := False;
-    BackupHoldsData := False;
     AppUsable := True;
     PreviousVersion := '';
     FailureHeading := '';
@@ -627,10 +544,7 @@ begin
     begin
       // Committed. From here the backup must never come back, whatever happens next.
       UpgradeSettled := True;
-      if BackupTaken and BackupHoldsData then
-        LogInstall('new install verified; the rollback backup was KEPT because it still'
-          + ' holds user data that could not be moved: ' + BackupDir)
-      else if BackupTaken then
+      if BackupTaken then
       begin
         // Leaving 200-odd MB of superseded payload behind next to the install, on a
         // drive the user chose because it had little room to spare, would undo the
@@ -702,16 +616,26 @@ begin
       WizardSelectTasks('!desktopicon');
   end;
 
+  // Shown only on a first install (DisableDirPage=auto). The user can pick another folder.
   if CurPageID = wpSelectDir then
   begin
-    if FolderHoldsForeignFiles(WizardDirValue) and not LooksLikeOurInstall(WizardDirValue) then
+    if not AcceptableInstallRoot(WizardDirValue) then
     begin
-      MsgBox('That folder already contains other files, and EZSide keeps its program and'
-        + ' all its data in the folder it is installed in. Pick an empty folder or one that'
-        + ' does not exist yet, for example D:\EZSide.', mbError, MB_OK);
+      SuppressibleMsgBox(ForeignFolderMessage, mbError, MB_OK, IDOK);
       Result := False;
     end;
   end;
+end;
+
+// The same check on every path, page shown or not, silent or not: an upgrade skips the
+// folder page, so /DIR=<other folder> would otherwise reach [InstallDelete] unchecked.
+// A non-empty result stops Setup at the Preparing page (exit code 7), before
+// [InstallDelete] and [Files] have touched anything.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  if not AcceptableInstallRoot(ExpandConstant('{app}')) then
+    Result := ForeignFolderMessage;
 end;
 
 function ShouldSkipPage(PageID: Integer): Boolean;
@@ -755,12 +679,20 @@ begin
     FinePrint.Width := WizardForm.WelcomeLabel2.Width;
     FinePrint.Height := ScaleY(46);
     FinePrint.Top := WizardForm.WelcomePage.ClientHeight - ScaleY(48);
-    // The folder is chosen on the next page, so the default is no longer the whole story
-    // (and WizardDirValue, NOT ExpandConstant('{app}'), is the only thing that may be
-    // read here: {app} is not initialised while the welcome page is showing).
-    FinePrint.Caption :=
-      'Free and open source (MIT). No account, no telemetry, no EZSide server.' + #13#10 +
-      'Pick the install folder next - EZSide keeps all its data there.';
+    // {app} is not initialised while the welcome page is showing, so it is not read here.
+    if WizardForm.PrevAppDir <> '' then
+    begin
+      // An upgrade: the folder page will be skipped (DisableDirPage=auto), so this is the
+      // last page before copying and its button is the Install button.
+      WizardForm.NextButton.Caption := SetupMessage(msgButtonInstall);
+      FinePrint.Caption :=
+        'Free and open source (MIT). No account, no telemetry, no EZSide server.' + #13#10 +
+        'Updates EZSide in ' + WizardForm.PrevAppDir + '. Your data stays there.';
+    end
+    else
+      FinePrint.Caption :=
+        'Free and open source (MIT). No account, no telemetry, no EZSide server.' + #13#10 +
+        'Pick the install folder next - EZSide keeps all its data there.';
   end;
 
   // There is no Ready page to press Install on any more, so the folder page is the last
@@ -786,6 +718,7 @@ end;
 // certificates, app copies, install.log) is still there afterwards. Ask once, default
 // No. A silent uninstall must neither ask nor delete: that path is scripted, and an
 // uninstall followed by a reinstall must not cost anyone their Apple ID session.
+// The program folder and a leftover app.rollback are installer-owned and always go.
 function InitializeUninstall: Boolean;
 begin
   // Read up front: nothing else in the uninstaller depends on {app} still being
@@ -796,32 +729,45 @@ end;
 
 // The question is shown in English and Vietnamese. Vietnamese letters are written as
 // character codes so the text survives however the compiler decodes this file.
-function DeleteDataQuestion(DataDir: String): String;
+// (The parameter is not named DataDir: that is the install-time function above.)
+function DeleteDataQuestion(Folder: String): String;
 begin
   Result :=
-    'Also delete EZSide data (accounts, certificates, app copies) in ' + DataDir + '?'
+    'Also delete EZSide data (accounts, certificates, app copies) in ' + Folder + '?'
     + #13#10#13#10
     + 'Xo' + #225 + ' lu' + #244 + 'n d' + #7919 + ' li' + #7879 + 'u EZSide (t' + #224
     + 'i kho' + #7843 + 'n, ch' + #7913 + 'ng ch' + #7881 + ', b' + #7843 + 'n sao app)'
-    + ' trong ' + DataDir + '?';
+    + ' trong ' + Folder + '?';
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
-  DataDir: String;
+  UserData: String;
 begin
   if CurUninstallStep <> usPostUninstall then
     Exit;
-  if UninstallSilent or (Length(UninstallAppDir) <= 3) then
+  if Length(UninstallAppDir) <= 3 then
     Exit;
 
-  DataDir := AddBackslash(UninstallAppDir) + 'data';
-  if not DirExists(DataDir) then
+  // Installer-owned leftovers: a backup from an interrupted upgrade (with or without its
+  // EZSide.exe - without it, it is debris of an interrupted delete) and whatever the
+  // uninstaller did not record, such as Python's __pycache__. The root passed
+  // AcceptableInstallRoot at install time, so these two names inside it are ours.
+  if DirExists(AddBackslash(UninstallAppDir) + 'app.rollback') then
+    DelTree(AddBackslash(UninstallAppDir) + 'app.rollback', True, True, True);
+  if DirExists(AddBackslash(UninstallAppDir) + 'app') then
+    DelTree(AddBackslash(UninstallAppDir) + 'app', True, True, True);
+
+  if UninstallSilent then
     Exit;
 
-  if MsgBox(DeleteDataQuestion(DataDir), mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+  UserData := AddBackslash(UninstallAppDir) + 'data';
+  if not DirExists(UserData) then
+    Exit;
+
+  if MsgBox(DeleteDataQuestion(UserData), mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
   begin
-    DelTree(DataDir, True, True, True);
+    DelTree(UserData, True, True, True);
     // The uninstaller already tried to remove the install folder while data was still in
     // it; now that the data is gone the folder is empty. RemoveDir refuses a non-empty one.
     RemoveDir(UninstallAppDir);

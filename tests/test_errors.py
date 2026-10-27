@@ -42,7 +42,7 @@ def usbmux(monkeypatch):
     def install(error):
         import pymobiledevice3.lockdown as pml
 
-        def connect(serial=None, connection_type=None):
+        def connect(serial=None, connection_type=None, **kwargs):
             raise error
 
         monkeypatch.setattr(pml, "create_using_usbmux", connect)
@@ -129,7 +129,7 @@ def test_a_forced_transport_is_honoured_not_treated_as_a_hint(usbmux, monkeypatc
 
     import pymobiledevice3.lockdown as pml
 
-    def connect(serial=None, connection_type=None):
+    def connect(serial=None, connection_type=None, **kwargs):
         attempted.append(connection_type)
         raise OSError("no USB transport")
 
@@ -147,7 +147,7 @@ def test_automatic_still_falls_back_to_the_network(usbmux, monkeypatch):
 
     import pymobiledevice3.lockdown as pml
 
-    def connect(serial=None, connection_type=None):
+    def connect(serial=None, connection_type=None, **kwargs):
         attempted.append(connection_type)
         raise OSError("nope")
 
