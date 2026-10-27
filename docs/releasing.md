@@ -55,7 +55,8 @@ Get-Content SHA256SUMS.txt
 
 CI has never driven an installer against a real iPhone, which is why the device
 test happens before the tag (step 2): once published, users get it immediately. The
-data folder `%LOCALAPPDATA%\EZSide` must survive an uninstall.
+data folder (`<install folder>\data`; dev runs: `%LOCALAPPDATA%\EZSide`) must survive an
+uninstall unless the user answers Yes to the "also delete EZSide data" question.
 
 ## Re-cutting a release
 

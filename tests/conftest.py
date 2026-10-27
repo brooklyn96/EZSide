@@ -16,7 +16,8 @@ if str(ENGINE_DIR) not in sys.path:
 def isolated_app_data(tmp_path_factory, monkeypatch):
     """Point ipaside_engine.paths at a throwaway data directory, for every test.
 
-    Everything in ``paths`` is derived from LOCALAPPDATA and most of it creates
+    Everything in ``paths`` is derived from IPASIDE_DATA_DIR (removed here, so a
+    developer's own override cannot leak in) or LOCALAPPDATA, and most of it creates
     directories just by being called, so a test that touches the engine without
     asking for isolation writes into the real %LOCALAPPDATA%\\EZSide - a stray
     tweaks/fixture/Fixture.dylib from an older version of this suite is still
@@ -28,6 +29,7 @@ def isolated_app_data(tmp_path_factory, monkeypatch):
     """
     root = tmp_path_factory.mktemp("appdata")
     monkeypatch.setenv("LOCALAPPDATA", str(root))
+    monkeypatch.delenv("IPASIDE_DATA_DIR", raising=False)
     return root
 
 
