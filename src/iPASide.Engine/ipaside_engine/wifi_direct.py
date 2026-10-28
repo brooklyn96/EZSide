@@ -948,11 +948,15 @@ def _attempt_sync(fn: Any, args: tuple, kwargs: dict, cap: float) -> tuple[dict[
 
 
 def _found_again(udid: str) -> bool:
-    """Wait for ``udid`` to answer on the LAN again, for up to ``RETRY_WINDOW`` s."""
+    """Wait for ``udid`` to answer on the LAN again, for up to ``RETRY_WINDOW`` s.
+
+    Every pause asks the last known address; the /24 is swept at most once per
+    ``SWEEP_INTERVAL`` (``locate``), so the window holds at most one sweep.
+    """
     deadline = time.monotonic() + RETRY_WINDOW
     while True:
         time.sleep(RETRY_PAUSE)
-        if find(udid) is not None:
+        if locate(udid) is not None:
             return True
         if time.monotonic() >= deadline:
             return False

@@ -789,6 +789,16 @@ def _tasks_left():
     return [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
 
 
+def _run(coro, limit=5):
+    """Run ``coro`` with a hard limit: a removed bound fails the test instead of hanging it."""
+
+    async def bounded():  # in the main task, so ``_tasks_left`` sees no extra task
+        async with asyncio.timeout(limit):
+            return await coro
+
+    return asyncio.run(bounded())
+
+
 def test_connect_uses_the_stored_pair_record_and_keeps_answering_the_heartbeat(tcp):
     # Over the network lockdownd drops every service connection after its TLS
     # handshake unless the host answers the heartbeat (seen live on iOS 16.7).
@@ -839,7 +849,7 @@ def test_a_silent_first_heartbeat_fails_within_the_bound_and_leaks_nothing(tcp, 
         assert time.monotonic() - start < 1.0
         assert client.closed and _tasks_left() == []
 
-    asyncio.run(scenario())
+    _run(scenario())
 
 
 def test_connect_fails_plainly_when_the_phone_is_not_found(tcp):
@@ -869,7 +879,7 @@ def test_a_stalled_pair_record_lookup_fails_within_the_bound(tcp, monkeypatch):
     monkeypatch.setattr(pair_records, "get_preferred_pair_record", stalled)
     start = time.monotonic()
     with pytest.raises(device.DeviceError, match="pair record"):
-        asyncio.run(wifi_direct.connect(UDID))
+        _run(wifi_direct.connect(UDID))
     assert time.monotonic() - start < 1.0 and "session" not in seen
 
 
@@ -892,7 +902,7 @@ def test_a_silent_heartbeat_tears_the_client_down_within_the_bound(monkeypatch):
         assert time.monotonic() - start < 1.0
         assert client.dropped and client.torn == ["the heartbeat stopped"]
 
-    asyncio.run(scenario())
+    _run(scenario())
 
 
 def test_a_polo_that_cannot_be_sent_tears_the_client_down(monkeypatch):
@@ -903,7 +913,7 @@ def test_a_polo_that_cannot_be_sent_tears_the_client_down(monkeypatch):
         await asyncio.wait_for(wifi_direct._heartbeat(client, client.heartbeat, 10), 2)
         assert client.dropped
 
-    asyncio.run(scenario())
+    _run(scenario())
 
 
 # --- the pinned client itself ----------------------------------------------- #
@@ -1030,6 +1040,15 @@ def test_a_service_without_tls_is_refused_before_any_socket(monkeypatch, service
     assert opened == []
 
 
+def test_a_service_that_strips_tls_is_refused_before_any_socket(monkeypatch, service_sockets):
+    opened = service_sockets()
+    client, _requests = _pinned(monkeypatch)
+    client._starting = "com.apple.afc"
+    with pytest.raises(device.DeviceError, match="without TLS"):
+        asyncio.run(client.create_service_connection(49000, ssl_context="tls", strip_ssl=True))
+    assert opened == [] and client.connections == []
+
+
 def test_only_the_heartbeat_may_be_plaintext(monkeypatch, service_sockets):
     opened = service_sockets(peer=None)
     client, _requests = _pinned(monkeypatch)
@@ -1058,10 +1077,12 @@ def test_teardown_makes_a_pending_service_read_fail(monkeypatch, service_sockets
 
 
 def test_a_silent_service_with_a_live_heartbeat_fails_after_the_idle_read(monkeypatch):
-    # The heartbeat keeps answering, so only the read deadline can end the wait.
+    # The heartbeat keeps answering, so only the read deadline can end the wait. The
+    # deadline is 100 times the Marco spacing and the watchdog 5 s: no race to lose
+    # under load, and the only upper limit is ``_run``'s.
     from pymobiledevice3.exceptions import ConnectionTerminatedError
 
-    monkeypatch.setattr(wifi_direct, "IDLE_READ", 0.2)
+    monkeypatch.setattr(wifi_direct, "IDLE_READ", 1.0)
     connection, _client_class = wifi_direct._classes()
     client, _requests = _pinned(monkeypatch)
 
@@ -1082,9 +1103,9 @@ def test_a_silent_service_with_a_live_heartbeat_fails_after_the_idle_read(monkey
         client.connections += [conn, other]
         beat = _Heartbeat(marcos=0)
 
-        async def answering():  # Marco every 0.05 s, as a healthy phone does
+        async def answering():  # a Marco every 0.01 s, as a healthy phone does
             while True:
-                await asyncio.sleep(0.05)
+                await asyncio.sleep(0.01)
                 beat._marcos.append({"Command": "Marco", "Interval": 0.05})
 
         alive = asyncio.create_task(answering())
@@ -1092,13 +1113,18 @@ def test_a_silent_service_with_a_live_heartbeat_fails_after_the_idle_read(monkey
         start = time.monotonic()
         with pytest.raises(ConnectionTerminatedError):
             await conn.recvall(4)
-        assert 0.15 < time.monotonic() - start < 1.0
+        assert time.monotonic() - start > 0.8, "ended by the read deadline, not earlier"
         assert client.dropped and other.closed.is_set() and client.service.closed
         assert len(beat.sent) >= 2, "the heartbeat was answering all along"
         alive.cancel()
-        await asyncio.gather(alive, client._heartbeat, return_exceptions=True)
+        while not client._heartbeat.done():
+            # Python 3.11's wait_for returns a result that finished in the same tick as
+            # a cancel, swallowing it; the fake phone never fails, so cancel until it ends.
+            client._heartbeat.cancel()
+            await asyncio.sleep(0.01)
+        await asyncio.gather(alive, return_exceptions=True)
 
-    asyncio.run(scenario())
+    _run(scenario())
 
 
 def test_an_idle_read_inside_the_heartbeat_still_closes_everything(monkeypatch):
@@ -1137,7 +1163,7 @@ def test_an_idle_read_inside_the_heartbeat_still_closes_everything(monkeypatch):
         assert client.dropped
         assert hb._closed and other.closed.is_set() and client.service.closed
 
-    asyncio.run(scenario())
+    _run(scenario())
 
 
 # --- the TCP session itself ------------------------------------------------- #
@@ -1209,7 +1235,7 @@ def test_a_silent_peer_times_out_and_the_socket_is_closed(session_parts, monkeyp
         assert time.monotonic() - start < 1.0
         assert conn.closed and _tasks_left() == []
 
-    asyncio.run(scenario())
+    _run(scenario())
 
 
 def test_a_refused_session_closes_the_socket(session_parts):
@@ -1326,6 +1352,27 @@ def test_without_retry_a_drop_surfaces_at_once(retry_clock, operation):
     with pytest.raises(type(_drop())):
         operation(body, retry=False)("app.ipa", UDID)
     assert len(calls) == 1
+
+
+def test_the_wait_asks_the_last_address_every_pause_and_sweeps_at_most_once(lan, monkeypatch):
+    sock = lan({}, last_ip="192.168.1.40")  # the phone never answers
+    monkeypatch.setattr(wifi_direct, "RETRY_PAUSE", 0.01)
+    monkeypatch.setattr(wifi_direct, "RETRY_WINDOW", 0.5)
+    monkeypatch.setattr(wifi_direct, "LAST_IP_TIMEOUT", 0.01)
+    monkeypatch.setattr(wifi_direct, "SWEEP_WINDOW", 0.01)
+    assert wifi_direct._found_again(UDID) is False
+    assert sock.sent.count("192.168.1.40") >= 3, "asked again at every pause"
+    assert sock.sent.count("192.168.1.41") == 1, "one sweep in the whole window"
+
+
+def test_the_wait_does_not_sweep_when_the_inventory_swept_a_moment_ago(lan, monkeypatch):
+    sock = lan({}, last_ip="192.168.1.40")
+    wifi_direct._sweep_due(UDID)
+    monkeypatch.setattr(wifi_direct, "RETRY_PAUSE", 0.01)
+    monkeypatch.setattr(wifi_direct, "RETRY_WINDOW", 0.1)
+    monkeypatch.setattr(wifi_direct, "LAST_IP_TIMEOUT", 0.01)
+    assert wifi_direct._found_again(UDID) is False
+    assert set(sock.sent) == {"192.168.1.40"}
 
 
 def test_a_second_drop_surfaces(retry_clock, operation):
