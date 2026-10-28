@@ -1,5 +1,6 @@
 import '../engine/engine.dart';
 import '../platform/background_refresh_scheduler.dart';
+import '../platform/startup_registration.dart';
 import '../services/file_picker.dart';
 import '../services/settings_store.dart';
 import '../ui/shell/app_dialogs.dart';
@@ -30,13 +31,15 @@ class SettingsViewModel extends BaseViewModel {
     required this._picker,
     required this._dialogs,
     required this._devices,
-  }) {
+    StartupRegistration? startup,
+  }) : _startup = startup ?? StartupRegistration() {
     // Synchronous, so the toggle and folder are already right on the first
     // frame; only the figures they describe have to be fetched.
     _signedIpa = _settings.loadSignedIpa();
 
     _devices.addListener(_onDeviceChanged);
     _loadAutoRefresh();
+    refreshStartup();
     _loadAccount();
     _loadAnisette();
     _loadVersion();
@@ -51,6 +54,7 @@ class SettingsViewModel extends BaseViewModel {
   final FilePickerService _picker;
   final DialogService _dialogs;
   final DeviceSelection _devices;
+  final StartupRegistration _startup;
 
   @override
   void dispose() {
@@ -104,6 +108,62 @@ class SettingsViewModel extends BaseViewModel {
       _autoRefreshMessage = _schedulerErrorText(error);
     } finally {
       _autoRefreshBusy = false;
+      notify();
+    }
+  }
+
+  // ---- Background section ----
+
+  bool _startupEnabled = false;
+  bool _startupBusy = false;
+  String _startupMessage = '';
+  bool _isStartupMessageError = false;
+
+  /// False hides the whole Background card: this OS has no Run key.
+  bool get startupSupported => _startup.isSupported;
+
+  /// Whether EZSide is registered to start in the tray at sign-in.
+  bool get startupEnabled => _startupEnabled;
+
+  /// True while the registry write runs; the toggle is disabled.
+  bool get startupBusy => _startupBusy;
+
+  /// Confirmation or failure text for the last toggle; empty when there is
+  /// none.
+  String get startupMessage => _startupMessage;
+
+  bool get hasStartupMessage => _startupMessage.isNotEmpty;
+
+  bool get isStartupMessageError => _isStartupMessageError;
+
+  /// Writes or removes the startup entry, then re-reads what the registry
+  /// actually has.
+  ///
+  /// The toggle moves immediately and snaps back if the write is refused.
+  /// Turning off always deletes, even when the toggle already shows off: a
+  /// value left by another copy of EZSide shows as off but is still removed.
+  Future<void> setStartupEnabled(bool enabled) async {
+    if (_startupBusy || (enabled && _startupEnabled)) return;
+
+    final bool before = _startupEnabled;
+    _startupEnabled = enabled;
+    _startupBusy = true;
+    notify();
+
+    try {
+      await _startup.setEnabled(enabled);
+      final actual = await _startup.isEnabled();
+      _startupEnabled = actual;
+      _isStartupMessageError = false;
+      _startupMessage = actual
+          ? 'On \u2014 starts in the tray when you sign in.'
+          : 'Off.';
+    } catch (error) {
+      _startupEnabled = before;
+      _isStartupMessageError = true;
+      _startupMessage = BaseViewModel.errorText(error);
+    } finally {
+      _startupBusy = false;
       notify();
     }
   }
@@ -573,6 +633,21 @@ class SettingsViewModel extends BaseViewModel {
       notify();
     } catch (_) {
       // The toggle simply stays off when the schedule cannot be read.
+    }
+  }
+
+  /// Re-reads the real Run key state, e.g. when the window is shown again
+  /// after the tray menu may have changed it. Skipped while a toggle runs, so
+  /// it never fights the optimistic state.
+  Future<void> refreshStartup() async {
+    if (!_startup.isSupported || _startupBusy) return;
+    try {
+      final bool actual = await _startup.isEnabled();
+      if (isDisposed || _startupBusy) return;
+      _startupEnabled = actual;
+      notify();
+    } catch (_) {
+      // The toggle simply stays off when the Run key cannot be read.
     }
   }
 

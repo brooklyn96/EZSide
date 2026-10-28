@@ -228,7 +228,8 @@ class UpdateViewModel extends BaseViewModel {
           UpdateOutcome.error,
           detail:
               'The installer is running, but EZSide could not close itself. '
-              'Close the app so Setup can finish.',
+              'Quit EZSide from its tray icon (right-click > Quit EZSide) '
+              'so Setup can finish.',
         );
         notify();
       }

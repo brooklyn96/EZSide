@@ -35,10 +35,8 @@ SingleInstanceGuard createSingleInstanceGuard() => Platform.isWindows
 
 /// Cross-process single-instance detection backed by a named Windows mutex.
 ///
-/// A second launch is expected to exit silently with code 0. It deliberately
-/// does NOT activate or focus the window of the running instance - the C# app
-/// never did, and reproducing that would need a window handshake this guard has
-/// no channel for.
+/// A second launch is expected to exit with code 0, after asking the running
+/// instance to show its window through [showRunningInstance].
 class WindowsSingleInstanceGuard implements SingleInstanceGuard {
   /// Creates a guard over the mutex called [name].
   WindowsSingleInstanceGuard([String name = singleInstanceMutexName])
@@ -72,6 +70,73 @@ class NullSingleInstanceGuard implements SingleInstanceGuard {
   @override
   void dispose() {
     // Nothing was acquired.
+  }
+}
+
+/// True when a GUI instance is running: it holds the mutex called [name].
+///
+/// Opens the mutex (it never creates one) and closes the handle straight away.
+/// False off Windows and on any error: the headless run uses this to leave its
+/// failure notice to the GUI, and an unanswered check must not silence it.
+bool singleInstanceIsHeld([String name = singleInstanceMutexName]) {
+  if (!Platform.isWindows) return false;
+
+  final Pointer<Utf16> namePtr = name.toNativeUtf16();
+  try {
+    final Pointer handle = _openMutexW(_synchronize, FALSE, namePtr);
+    if (handle == nullptr) return false;
+    CloseHandle(HANDLE(handle));
+    return true;
+  } catch (_) {
+    return false;
+  } finally {
+    malloc.free(namePtr);
+  }
+}
+
+/// Class of the hidden window that owns the tray icon (kHostClassName in
+/// windows/runner/tray_icon.cpp). Only the instance holding the single-instance
+/// mutex creates one, so finding it finds that instance.
+const String trayHostWindowClass = 'EZSide.TrayHost';
+
+/// WM_APP + 2, kShowAppMessage in tray_icon.cpp: "show, restore and focus".
+const int _showAppMessage = 0x8000 + 2;
+
+/// Asks the running GUI instance to show, restore and focus its window. Called
+/// by a second launch just before it exits.
+///
+/// The running instance makes its tray window only once its Dart side is up, so
+/// a launch that races a starting instance looks again, up to [attempts] times
+/// [interval] apart. Returns whether the request was posted. A no-op off
+/// Windows, and it never throws: the second launch exits either way.
+bool showRunningInstance({
+  String windowClass = trayHostWindowClass,
+  int attempts = 20,
+  Duration interval = const Duration(milliseconds: 250),
+}) {
+  if (!Platform.isWindows) return false;
+
+  final Pointer<Utf16> className = windowClass.toNativeUtf16();
+  final Pointer<Uint32> processId = calloc<Uint32>();
+  try {
+    for (int attempt = 0; attempt < attempts; attempt++) {
+      if (attempt > 0) sleep(interval);
+      final Pointer window = _findWindowW(className, nullptr);
+      if (window == nullptr) continue;
+
+      // This launch is what the user just started, so it may take the
+      // foreground; handing that right over is what lets the running instance
+      // raise its window instead of only flashing its taskbar button.
+      _getWindowThreadProcessId(window, processId);
+      _allowSetForegroundWindow(processId.value);
+      return _postMessageW(window, _showAppMessage, 0, 0) != 0;
+    }
+    return false;
+  } catch (_) {
+    return false;
+  } finally {
+    malloc.free(className);
+    calloc.free(processId);
   }
 }
 
@@ -179,7 +244,42 @@ final Pointer Function(Pointer, int, Pointer<Utf16>) _createMutexW = _kernel32
       Pointer Function(Pointer, int, Pointer<Utf16>)
     >('CreateMutexW');
 
+// SYNCHRONIZE: the least access that opens a mutex.
+const int _synchronize = 0x00100000;
+
+final Pointer Function(int, int, Pointer<Utf16>) _openMutexW = _kernel32
+    .lookupFunction<
+      Pointer Function(Uint32, Int32, Pointer<Utf16>),
+      Pointer Function(int, int, Pointer<Utf16>)
+    >('OpenMutexW');
+
 final int Function(Pointer) _releaseMutex = _kernel32
     .lookupFunction<Int32 Function(Pointer), int Function(Pointer)>(
       'ReleaseMutex',
     );
+
+final DynamicLibrary _user32 = DynamicLibrary.open('user32.dll');
+
+// Bound by hand for the same reason as CreateMutexW above.
+final Pointer Function(Pointer<Utf16>, Pointer<Utf16>) _findWindowW = _user32
+    .lookupFunction<
+      Pointer Function(Pointer<Utf16>, Pointer<Utf16>),
+      Pointer Function(Pointer<Utf16>, Pointer<Utf16>)
+    >('FindWindowW');
+
+final int Function(Pointer, Pointer<Uint32>) _getWindowThreadProcessId = _user32
+    .lookupFunction<
+      Uint32 Function(Pointer, Pointer<Uint32>),
+      int Function(Pointer, Pointer<Uint32>)
+    >('GetWindowThreadProcessId');
+
+final int Function(int) _allowSetForegroundWindow = _user32
+    .lookupFunction<Int32 Function(Uint32), int Function(int)>(
+      'AllowSetForegroundWindow',
+    );
+
+final int Function(Pointer, int, int, int) _postMessageW = _user32
+    .lookupFunction<
+      Int32 Function(Pointer, Uint32, IntPtr, IntPtr),
+      int Function(Pointer, int, int, int)
+    >('PostMessageW');

@@ -4,6 +4,37 @@ All notable changes to iPASide are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.1] - 2026-10-28
+
+### Fixed
+
+- **The EZSide icon is centred.** The app tile and iPhone sat about 7% right of centre; the mark
+  is shifted so both margins match, and every icon, tray, installer and in-app image is rebuilt
+  from it (sources re-rendered with resvg).
+
+## [1.3.0] - 2026-10-28
+
+### Added
+
+- **EZSide runs in the system tray.** Closing the window hides it to the tray and keeps the engine
+  running, so a phone plugged in while the window is closed is still remembered and its Wi-Fi sync
+  is still turned on. The tray menu opens EZSide, runs "Refresh due apps now", shows the last
+  refresh result, toggles Start with Windows and quits. The icon comes back after Explorer
+  restarts, and is retried while the shell is not ready at sign-in.
+- **Start EZSide with Windows (in the tray).** A new BACKGROUND section in Settings, and the same
+  toggle in the tray menu, add or remove `"<EZSide.exe>" --tray` under the current user's Run key.
+  It is off by default. `--tray` starts EZSide with no window.
+- **A refresh failure shows as a tray notification** while EZSide is in the tray, with the same
+  words and the same once-per-20-hours limit as before. The scheduled run stays the only refresh
+  scheduler; it no longer shows its message box while EZSide is running, and EZSide falls back to
+  that box when it has no tray icon.
+
+### Changed
+
+- Opening EZSide again while it runs brings up its window instead of doing nothing.
+- The uninstaller removes the "EZSide Auto-Refresh" scheduled task and the Start with Windows
+  entry. The installer and updater messages say to quit EZSide from its tray icon.
+
 ## [1.2.1] - 2026-10-28
 
 ### Fixed
