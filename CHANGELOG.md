@@ -4,6 +4,14 @@ All notable changes to iPASide are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.1] - 2026-10-28
+
+### Fixed
+
+- **The EZSide icon is centred.** The app tile and iPhone sat about 7% right of centre; the mark
+  is shifted so both margins match, and every icon, tray, installer and in-app image is rebuilt
+  from it (sources re-rendered with resvg).
+
 ## [1.3.0] - 2026-10-28
 
 ### Added
