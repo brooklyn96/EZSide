@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import datetime
 import getpass
 import io
@@ -634,8 +635,28 @@ def _phone_error(udid: str | None, probes: dict[str, Exception | None]) -> Excep
     return probes[udid]
 
 
+def _refresh_busy(args: argparse.Namespace, busy: Exception) -> int:
+    """The unattended run's answer when another EZSide operation holds the lock.
+
+    Not a failure: the hourly run simply tries again next hour, so it gives up at once
+    with nothing refreshed and the usual busy sentence as a message.
+    """
+    if args.json:
+        _emit(args, {"status": "done", "count": 0, "refreshed": [], "message": str(busy)})
+    else:
+        print(busy)
+    return 0
+
+
 def _cmd_refresh(args: argparse.Namespace) -> int:
-    with refresh.operation_lock():
+    with contextlib.ExitStack() as stack:
+        try:
+            # An unattended run never waits for the lock; any other waits as before.
+            stack.enter_context(refresh.operation_lock(wait=not args.unattended))
+        except refresh.OperationBusy as busy:
+            if not args.unattended:
+                raise
+            return _refresh_busy(args, busy)
         if args.bundle_id:
             targets = [r for r in refresh.records() if r["bundle_id"] == args.bundle_id]
             if not targets:
@@ -668,10 +689,15 @@ def _cmd_refresh(args: argparse.Namespace) -> int:
                     # No Apple call for an app whose phone cannot be reached. An unattended
                     # run is retried every hour, so it stays quiet while the app still has
                     # a day or more left and only reports one that is close to expiry; an
-                    # unknown expiry is treated as close.
+                    # unknown expiry is treated as close. An app whose certificate is
+                    # gone (stale) does not launch, whatever its profile says, so it is
+                    # never waited for.
                     days = entry.get("days_left")
                     waiting = (args.unattended and isinstance(gone, device.DeviceError)
-                               and days is not None and days >= 1.0)
+                               and days is not None and days >= 1.0
+                               and serial is None
+                               and entry["bundle_id"] not in
+                               {r["bundle_id"] for r, _ in _stale_records(None, start)})
                     failed.add(entry["bundle_id"])
                     by_app[entry["bundle_id"]] = {
                         "bundle_id": entry["bundle_id"],

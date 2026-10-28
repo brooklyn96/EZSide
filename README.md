@@ -129,7 +129,9 @@ There is a full light theme too, and the sun in the title bar switches to it.
   Apple ID you have signed in. Each certificate says which tool registered it, because
   Apple counts them per machine and revoking the wrong one breaks a different tool's apps.
 - **Keep your apps working.** The Library counts down each app's 7 days, and a
-  daily background task re-signs whatever is due — no need to leave iPASide open.
+  background task checks every hour and re-signs whatever is due — no need to leave
+  iPASide open. It works over Wi-Fi too (same Wi-Fi as the PC, with Wi-Fi sync on in
+  Finder or iTunes); a cable is the most reliable.
 - **Use more than one Apple ID.** Keep several signed in and switch without typing
   a password again — useful when one account has used up its ten App IDs for the
   week. A refresh always re-signs as the account that signed the app, because a
@@ -207,7 +209,7 @@ A Windows app driving a Python engine that does the Apple-facing work:
 - **Provisioning** — the same `developerservices2.apple.com` API Xcode uses.
 - **Signing** — a modern `zsign` (SHA256-only CodeDirectory, canonical DER
   entitlements), built from source, with dylib injection and extension stripping.
-- **Auto-refresh** — a registry tracks each install's expiry, and a daily Windows
+- **Auto-refresh** — a registry tracks each install's expiry, and an hourly Windows
   scheduled task runs `EZSide.exe --auto-refresh` to re-sign what is due.
 
 ## Build it yourself

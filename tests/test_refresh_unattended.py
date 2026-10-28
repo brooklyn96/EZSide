@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import datetime
 import json
+import time
 
 import pytest
 
 from ipaside_engine import __main__ as cli
-from ipaside_engine import device, lockdown, provision, refresh, sideload
+from ipaside_engine import device, lockdown, paths, provision, refresh, sideload
 from ipaside_engine.errors import EngineError
 
 UDID = "935cbbb9b82d25d15566e5939bcea5677b1c44ae"
@@ -21,10 +22,12 @@ OTHER_UDID = "00008110-000A1B2C3D4E5F60"
 GONE = "Could not reach device " + UDID + ": nope. Check it is plugged in, unlocked, and trusted."
 
 
-def _rec(bundle_id, days, udid=UDID):
+def _rec(bundle_id, days, udid=UDID, cert_serial="S1"):
     expires = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=days)
-    item = {"bundle_id": bundle_id, "team_id": "TEAM000001", "cert_serial": "S1",
-            "expires_at": expires.isoformat()}
+    # source_ipa is any file that exists (this one): a refresh re-signs from it, and only
+    # checks it is there before handing it to the (stubbed) signing step.
+    item = {"bundle_id": bundle_id, "team_id": "TEAM000001", "cert_serial": cert_serial,
+            "expires_at": expires.isoformat(), "source_ipa": __file__}
     if udid:
         item["udid"] = udid
     return item
@@ -37,8 +40,14 @@ def _seed(*records):
 
 @pytest.fixture
 def run_refresh(monkeypatch, capsys):
-    """Run `refresh --json` with spies on every step that talks to Apple or signs."""
-    spies: dict[str, list] = {"probed": [], "refreshed": [], "apple": []}
+    """Run `refresh --json` through the real ``refresh_record``, stubbing only its leaves.
+
+    The phone probe and the three steps that talk to Apple or sign (the account lookup,
+    ``ensure_signing_assets`` and ``run_sideload``) are spies: ``spies["apple"]`` lists
+    each one that ran, so "no Apple call" is checked against spies that do fire when the
+    phone answers.
+    """
+    spies: dict[str, list] = {"probed": [], "apple": []}
     reachable: dict[str, bool] = {UDID: False, OTHER_UDID: True}
 
     async def probe(serial):
@@ -46,18 +55,17 @@ def run_refresh(monkeypatch, capsys):
         if not reachable[serial]:
             raise device.DeviceError(GONE)
 
-    def refresh_record(entry, on_progress=None, **kwargs):
-        spies["refreshed"].append(entry["bundle_id"])
-        return {"expires_at": "x", "refresh_mode": "resign"}
-
-    def apple(*_args, **_kwargs):
-        spies["apple"].append(1)
-        raise AssertionError("an Apple call was made for an unreachable phone")
+    def leaf(name, result=None):
+        def spy(*_args, **_kwargs):
+            spies["apple"].append(name)
+            return result
+        return spy
 
     monkeypatch.setattr(cli.lockdown, "probe", probe)
-    monkeypatch.setattr(cli.sideload, "refresh_record", refresh_record)
-    monkeypatch.setattr(sideload, "_refresh_account", apple)
-    monkeypatch.setattr(provision, "ensure_signing_assets", apple)
+    monkeypatch.setattr(sideload, "_refresh_account", leaf("account"))
+    monkeypatch.setattr(provision, "ensure_signing_assets", leaf("assets"))
+    monkeypatch.setattr(sideload, "run_sideload",
+                        leaf("sign", {"status": "installed", "expires_at": "x"}))
     monkeypatch.setattr(cli.gsa, "account_for_team", lambda _team: None)
 
     def go(*argv):
@@ -66,6 +74,12 @@ def run_refresh(monkeypatch, capsys):
 
     go.reachable = reachable
     return go
+
+
+def _team_certificate(monkeypatch, serial):
+    """Make the team's current certificate ``serial``, as the local cache would say."""
+    monkeypatch.setattr(cli.gsa, "account_for_team", lambda _team: "me@example.com")
+    monkeypatch.setattr(cli.provision, "cached_serial", lambda _account: serial)
 
 
 def test_the_flag_is_accepted_and_off_by_default():
@@ -80,7 +94,7 @@ def test_an_unreachable_phone_gets_no_apple_call(run_refresh):
     code, summary, spies = run_refresh()
 
     assert code == cli.EXIT_PARTIAL_FAILURE
-    assert spies["refreshed"] == [] and spies["apple"] == []
+    assert spies["apple"] == []
     assert summary["refreshed"] == [
         {"bundle_id": "a", "status": "error", "refresh_mode": None, "error": GONE}
     ]
@@ -92,7 +106,7 @@ def test_unattended_defers_an_app_with_a_day_or_more_left(run_refresh):
     code, summary, spies = run_refresh("--within", "3", "--unattended")
 
     assert code == 0, "a deferred app is not a failure"
-    assert spies["refreshed"] == []
+    assert spies["apple"] == []
     assert summary["refreshed"] == [
         {"bundle_id": "later", "status": "deferred", "refresh_mode": None, "error": GONE}
     ]
@@ -154,7 +168,7 @@ def test_each_phone_is_probed_once_and_a_reachable_one_refreshes_as_before(run_r
     code, summary, spies = run_refresh()
 
     assert sorted(spies["probed"]) == sorted([UDID, OTHER_UDID])
-    assert spies["refreshed"] == ["here"]
+    assert spies["apple"] == ["account", "sign"], "only the reachable phone's app"
     by_id = {r["bundle_id"]: r["status"] for r in summary["refreshed"]}
     assert by_id == {"gone": "error", "here": "installed", "gone2": "error"}
     assert code == cli.EXIT_PARTIAL_FAILURE
@@ -167,7 +181,7 @@ def test_a_reachable_phone_refreshes_as_before(run_refresh):
     code, summary, spies = run_refresh("--unattended")
 
     assert code == 0
-    assert spies["refreshed"] == ["a"]
+    assert spies["apple"] == ["account", "sign"]
     assert summary["refreshed"][0]["status"] == "installed"
 
 
@@ -178,7 +192,7 @@ def test_a_record_without_a_udid_is_not_probed(run_refresh):
 
     assert code == 0
     assert spies["probed"] == []
-    assert spies["refreshed"] == ["old"]
+    assert spies["apple"] == ["account", "sign"]
 
 
 def test_a_setting_the_engine_cannot_read_is_an_error_not_a_deferral(monkeypatch, run_refresh):
@@ -246,9 +260,10 @@ def test_a_wifi_only_phone_passes_end_to_end(monkeypatch, capsys):
     client = _Client()
     _usbmux(monkeypatch, {"USB": OSError("no cable"), None: client})
     seen = []
-    monkeypatch.setattr(cli.sideload, "refresh_record",
-                        lambda entry, on_progress=None, **kw: seen.append(entry["bundle_id"])
-                        or {"expires_at": "x", "refresh_mode": "resign"})
+    monkeypatch.setattr(sideload, "_refresh_account", lambda entry: None)
+    monkeypatch.setattr(sideload, "run_sideload",
+                        lambda source, udid, **kw: seen.append(kw["bundle_id"])
+                        or {"status": "installed", "expires_at": "x"})
     monkeypatch.setattr(cli.gsa, "account_for_team", lambda _team: None)
     _seed(_rec("a", 0.5))
 
@@ -257,3 +272,106 @@ def test_a_wifi_only_phone_passes_end_to_end(monkeypatch, capsys):
     assert code == 0
     assert seen == ["a"]
     assert client.closed
+
+
+# --------------------------------------------------------------------------- #
+# A revoked certificate is never waited for
+# --------------------------------------------------------------------------- #
+def test_a_stale_record_on_an_unreachable_phone_is_an_error_even_unattended(
+    monkeypatch, run_refresh
+):
+    """Its certificate is gone, so the app does not launch whatever days its profile has."""
+    _team_certificate(monkeypatch, "S2")
+    _seed(_rec("dead", 0.5, cert_serial="S1"))
+
+    code, summary, spies = run_refresh("--unattended")
+
+    assert code == cli.EXIT_PARTIAL_FAILURE
+    assert spies["apple"] == []
+    assert summary["refreshed"] == [
+        {"bundle_id": "dead", "status": "error", "refresh_mode": None, "error": GONE}
+    ]
+
+
+def test_a_stale_record_with_days_left_is_not_deferred(monkeypatch, run_refresh):
+    _team_certificate(monkeypatch, "S2")
+    _seed(_rec("dead", 5, cert_serial="S1"))
+
+    code, summary, spies = run_refresh("--all", "--unattended")
+
+    assert code == cli.EXIT_PARTIAL_FAILURE
+    assert spies["apple"] == []
+    assert summary["refreshed"][0]["status"] == "error"
+    assert summary["refreshed"][0]["error"] == GONE
+
+
+def test_a_stale_record_found_by_the_stale_loop_is_not_deferred(monkeypatch, run_refresh):
+    """Not due itself, so only the look for records the current certificate did not sign finds it."""
+    _team_certificate(monkeypatch, "S2")
+    _seed(_rec("due", 0.5, udid=OTHER_UDID, cert_serial="S2"),
+          _rec("dead", 5, cert_serial="S1"))
+
+    code, summary, spies = run_refresh("--unattended")
+
+    assert code == cli.EXIT_PARTIAL_FAILURE
+    assert {r["bundle_id"]: r["status"] for r in summary["refreshed"]} == {
+        "due": "installed", "dead": "error",
+    }
+    assert spies["apple"] == ["account", "sign"], "only the reachable phone's app"
+
+
+def test_a_current_record_with_days_left_is_still_deferred(monkeypatch, run_refresh):
+    _team_certificate(monkeypatch, "S1")
+    _seed(_rec("later", 1.5, cert_serial="S1"))
+
+    code, summary, _spies = run_refresh("--within", "3", "--unattended")
+
+    assert code == 0
+    assert summary["refreshed"][0]["status"] == "deferred"
+
+
+# --------------------------------------------------------------------------- #
+# The unattended run does not wait for another operation
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def other_operation(monkeypatch):
+    """Start another process holding engine.lock, as a GUI sideload would; call it last.
+
+    Records are seeded first because writing one takes the same lock.
+    """
+    handles = []
+
+    def hold(timeout):
+        monkeypatch.setattr(refresh, "LOCK_TIMEOUT_SECONDS", timeout)
+        monkeypatch.setattr(refresh, "_LOCK_POLL_SECONDS", 0.05)
+        handle = open(paths.data_dir() / refresh.LOCK_FILE, "a+b")
+        refresh._try_lock(handle)
+        handles.append(handle)
+
+    yield hold
+    for handle in handles:
+        refresh._unlock(handle)
+
+
+def test_unattended_gives_up_at_once_when_another_operation_runs(other_operation, run_refresh):
+    _seed(_rec("a", 0.5))
+    other_operation(30.0)
+    started = time.monotonic()
+
+    code, summary, spies = run_refresh("--unattended")
+
+    assert time.monotonic() - started < 5, "it must not wait out the 30 s lock timeout"
+    assert code == 0, "the hourly run just tries again next hour"
+    assert summary["refreshed"] == [] and summary["count"] == 0
+    assert "Another EZSide operation is running" in summary["message"]
+    assert spies["probed"] == [] and spies["apple"] == []
+
+
+def test_manual_refresh_still_waits_then_fails_when_another_operation_runs(
+    other_operation, run_refresh
+):
+    _seed(_rec("a", 0.5))
+    other_operation(0.3)
+
+    with pytest.raises(refresh.RegistryError, match="Another EZSide operation is running"):
+        run_refresh()

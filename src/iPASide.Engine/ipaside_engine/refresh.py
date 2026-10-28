@@ -142,8 +142,12 @@ def _unlock(handle: Any) -> None:
         handle.close()
 
 
-def _busy() -> RegistryError:
-    return RegistryError(
+class OperationBusy(RegistryError):
+    """Another EZSide operation holds the lock and this one was not willing to wait longer."""
+
+
+def _busy() -> OperationBusy:
+    return OperationBusy(
         "Another EZSide operation is running (a sideload or refresh, maybe the scheduled "
         "background refresh). Try again when it has finished."
     )
@@ -161,9 +165,9 @@ def _announce_wait() -> None:
     print(json.dumps(event), file=sys.stderr, flush=True)
 
 
-def _acquire_file_lock() -> Any:
+def _acquire_file_lock(timeout: float) -> Any:
     handle = open(paths.data_dir() / LOCK_FILE, "a+b")
-    deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
+    deadline = time.monotonic() + timeout
     announced = False
     while True:
         try:
@@ -180,19 +184,22 @@ def _acquire_file_lock() -> Any:
 
 
 @contextlib.contextmanager
-def operation_lock() -> Iterator[None]:
+def operation_lock(wait: bool = True) -> Iterator[None]:
     """Hold data_dir()/engine.lock for a sideload, refresh, forget or registry write.
 
     Re-entrant within a process (a refresh holds it and the sideload it runs takes it
-    again); another process waits up to :data:`LOCK_TIMEOUT_SECONDS`, then gets a
-    :class:`RegistryError` saying another operation is running.
+    again); another process waits up to :data:`LOCK_TIMEOUT_SECONDS`, then gets an
+    :class:`OperationBusy` saying another operation is running. With ``wait=False`` it
+    does not wait at all: a busy lock raises :class:`OperationBusy` at once, for a caller
+    (the hourly background run) that would rather try again later than hold a slot.
     """
     global _lock_depth, _lock_handle
-    if not _process_lock.acquire(timeout=LOCK_TIMEOUT_SECONDS):
+    timeout = LOCK_TIMEOUT_SECONDS if wait else 0.0
+    if not _process_lock.acquire(timeout=timeout):
         raise _busy()
     try:
         if _lock_depth == 0:
-            _lock_handle = _acquire_file_lock()
+            _lock_handle = _acquire_file_lock(timeout)
         _lock_depth += 1
         try:
             yield

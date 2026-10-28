@@ -71,9 +71,9 @@ still kills them, via the engine client's shutdown frame.
 ### 3. launchd auto-refresh scheduler
 
 Implement `BackgroundRefreshScheduler` on launchd: a per-user LaunchAgent plist
-(`~/Library/LaunchAgents/com.ipaside.autorefresh.plist`) with a daily
+(`~/Library/LaunchAgents/com.ipaside.autorefresh.plist`) with an hourly
 `StartCalendarInterval`, running `iPASide --auto-refresh`. That is the
-counterpart of the daily `schtasks` job in
+counterpart of the hourly `schtasks` job in
 `WindowsBackgroundRefreshScheduler`. The enable/disable calls map to writing
 the plist plus `launchctl bootstrap`/`bootout`. Until then the unsupported
 fallback reports that it is unavailable and the Settings toggle stays disabled,
