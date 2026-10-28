@@ -11,7 +11,7 @@ Sizes come from Inno Setup 6.7's documented image areas:
   bar-track.png  stand-in progress track  (see EZSide.iss)
   bar-fill.png   stand-in progress fill
 
-Everything is drawn oversized and downsampled, so it stays sharp at 200%+ DPI.
+Everything is drawn at the largest size Inno shows, so it stays sharp at 200%+ DPI.
 
 Run:  .\.venv\Scripts\python packaging\brand\make-art.py
 """
@@ -20,15 +20,16 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-# The app's dark palette, verbatim from src/iPASide.Flutter/lib/ui/theme/palette.dart.
-# The installer is dark-only because the app's own window is what it hands over to, and
-# a light installer opening a near-black app is a jarring seam.
+# The wizard itself stays dark (WizardStyle=modern dark in EZSide.iss), so the backdrop
+# it draws its text on is the app canvas, bg0 in src/iPASide.Flutter/lib/ui/theme/palette.dart.
+# The brand panel carries the mark's own palette (packaging/brand/mark-source.svg).
+# Flat colours only: no gradients, no glows.
 BG = (0x0B, 0x0B, 0x0D)        # bg0, the app canvas
-SURFACE = (0x12, 0x12, 0x15)   # bg1, a raised card
-INDIGO = (0x66, 0x72, 0xE6)    # accentGradientStops[0]
-VIOLET = (0x8C, 0x5C, 0xF0)    # accentGradientStops[1]
-TEXT = (0xE9, 0xEA, 0xEE)
-MUTED = (0x8B, 0x8B, 0x99)
+GROUND = (0xFF, 0xFF, 0xFF)    # white, so the mark's #E6F0FF tile still reads as a tile
+NAVY = (0x0B, 0x2A, 0x5B)      # the mark's body, the wordmark
+ACCENT = (0x2F, 0x7B, 0xFF)    # the mark's accent and the app's accent
+LINK = (0x1F, 0x5F, 0xD6)      # accent darkened to read as small text on GROUND
+MUTED = (0x4A, 0x5D, 0x7E)     # NAVY softened for the tagline
 
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
@@ -43,89 +44,25 @@ def font(name: str, size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(str(FONTS / name), size)
 
 
-def vertical_gradient(size: tuple[int, int], top: tuple, bottom: tuple) -> Image.Image:
-    """Smooth two-stop vertical gradient, built one row tall then stretched."""
-    width, height = size
-    strip = Image.new("RGB", (1, height))
-    pixels = strip.load()
-    for y in range(height):
-        t = y / max(1, height - 1)
-        pixels[0, y] = tuple(round(a + (b - a) * t) for a, b in zip(top, bottom))
-    return strip.resize((width, height), Image.BICUBIC)
-
-
-def horizontal_gradient(size: tuple[int, int], left: tuple, right: tuple) -> Image.Image:
-    """Smooth two-stop horizontal gradient, built one column wide then stretched."""
-    width, height = size
-    strip = Image.new("RGB", (width, 1))
-    pixels = strip.load()
-    for x in range(width):
-        t = x / max(1, width - 1)
-        pixels[x, 0] = tuple(round(a + (b - a) * t) for a, b in zip(left, right))
-    return strip.resize((width, height), Image.BICUBIC)
-
-
-def glow(base: Image.Image, center: tuple[int, int], radius: int, color: tuple, peak: int) -> None:
-    """A soft radial glow, the way the app's hero card lifts off the canvas.
-
-    The falloff is computed once in a small square and scaled up: faster than plotting
-    every pixel, and smoother. BILINEAR rather than BICUBIC on the way up, because cubic
-    resampling overshoots at the mask edge and leaves a faint square seam where the glow
-    should already have faded to nothing.
-    """
-    samples = 160
-    mask = Image.new("L", (samples, samples), 0)
-    pixels = mask.load()
-    half = samples / 2
-    for y in range(samples):
-        dy = (y - half + 0.5) / half
-        for x in range(samples):
-            dx = (x - half + 0.5) / half
-            distance = (dx * dx + dy * dy) ** 0.5
-            if distance < 1.0:
-                pixels[x, y] = round(peak * (1.0 - distance) ** 2)
-    mask = mask.resize((radius * 2, radius * 2), Image.BILINEAR)
-    full = Image.new("L", base.size, 0)
-    full.paste(mask, (center[0] - radius, center[1] - radius))
-    base.paste(Image.new("RGB", base.size, color), (0, 0), full)
-
-
-def accent_rule(width: int, height: int) -> Image.Image:
-    """The indigo -> violet sweep the app uses on its primary button."""
-    return horizontal_gradient((width, height), INDIGO, VIOLET).convert("RGBA")
-
-
 def build_backdrop() -> Image.Image:
-    """Background for every wizard page.
+    """Background for every wizard page: the app canvas, flat.
 
-    Deliberately quiet: wizard text sits directly on this, so it carries two soft glows
-    and nothing else. No texture or motif — the app's own surfaces are flat, and a
-    patterned installer opening a flat app would not match.
-
-    Both glows sit right of centre on purpose. On the Welcome and Finished pages the left
-    third of this image is covered by panel.png, so anything placed there is never seen.
+    Wizard text sits directly on this in the dark style's light colours, so it stays
+    dark and carries nothing at all.
     """
-    size = (1656, 1200)
-    img = vertical_gradient(size, BG, (0x10, 0x10, 0x14))
-    glow(img, (820, 60), 840, INDIGO, 38)
-    glow(img, (1560, 1170), 700, VIOLET, 30)
-    return img
+    return Image.new("RGB", (1656, 1200), BG)
 
 
 def build_panel() -> Image.Image:
     """The tall left column on the Welcome and Finished pages: the brand moment."""
-    size = (548, 1050)
-    img = vertical_gradient(size, SURFACE, (0x09, 0x09, 0x0B))
-    glow(img, (160, 130), 470, INDIGO, 86)
-    glow(img, (480, 990), 440, VIOLET, 66)
-    img = img.convert("RGBA")
+    img = Image.new("RGBA", (548, 1050), GROUND + (255,))
 
     mark = Image.open(MARK).convert("RGBA").resize((156, 156), Image.LANCZOS)
     img.alpha_composite(mark, (74, 168))
 
     draw = ImageDraw.Draw(img)
-    draw.text((74, 372), "EZSide", font=font("Inter-Bold.ttf", 66), fill=TEXT)
-    img.alpha_composite(accent_rule(168, 4), (76, 470))
+    draw.text((74, 372), "EZSide", font=font("Inter-Bold.ttf", 66), fill=NAVY)
+    draw.rectangle((76, 470, 76 + 168 - 1, 470 + 4 - 1), fill=ACCENT)
     draw.text(
         (74, 508),
         "Sideload iOS apps\nfrom Windows",
@@ -133,7 +70,7 @@ def build_panel() -> Image.Image:
         fill=MUTED,
         spacing=12,
     )
-    draw.text((74, 962), "free & open-source", font=font("Inter-SemiBold.ttf", 30), fill=INDIGO)
+    draw.text((74, 962), "free & open-source", font=font("Inter-SemiBold.ttf", 30), fill=LINK)
     return img.convert("RGB")
 
 
@@ -147,7 +84,7 @@ def build_logo() -> Image.Image:
 # instead (see the progress-bar block in EZSide.iss): pixels are the one thing a VCL
 # style cannot restyle.
 def build_bar_fill() -> Image.Image:
-    return horizontal_gradient((1200, 24), INDIGO, VIOLET)
+    return Image.new("RGB", (1200, 24), ACCENT)
 
 
 def build_bar_track() -> Image.Image:

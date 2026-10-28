@@ -29,7 +29,7 @@ AppSupportURL={#AppUrl}
 ; hidebevels       the divider lines read as creases on top of the background art.
 ; includetitlebar  style the title bar and border too, so the window is one surface —
 ;                  the app's own window is chromeless for the same reason.
-; Colours are the app's dark tokens: #0B0B0D canvas, indigo -> violet accent.
+; Colours are the app's dark tokens: #0B0B0D canvas, #2F7BFF blue accent.
 WizardStyle=modern dark hidebevels includetitlebar
 WizardSizePercent=130
 WizardBackColor=#0b0b0d
@@ -194,7 +194,7 @@ var
 // ── Brand-coloured progress bar ───────────────────────────────────────────────
 // TNewProgressBar exposes no colour property, and the active style paints it the stock
 // green, which reads as a different product against this canvas. So the native bar is
-// hidden and two stretched images stand in: a dark track and an indigo -> violet fill
+// hidden and two stretched images stand in: a dark track and a flat blue (#2F7BFF) fill
 // whose width follows real progress. Images rather than coloured panels, because a VCL
 // style overrides control colours set from Pascal but cannot restyle a bitmap.
 procedure CreateProgressBar;
