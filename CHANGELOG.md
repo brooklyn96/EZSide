@@ -4,7 +4,7 @@ All notable changes to iPASide are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and
 [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [1.3.2] - 2026-10-28
 
 ### Fixed
 
