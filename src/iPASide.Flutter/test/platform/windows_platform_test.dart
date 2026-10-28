@@ -41,6 +41,37 @@ bool _isInAnyJob(HANDLE process) {
   }
 }
 
+/// A scheduler that records what start-up asked of it.
+class _FakeScheduler implements BackgroundRefreshScheduler {
+  _FakeScheduler({
+    required this.exists,
+    this.supported = true,
+    this.setFailure,
+    this.queryFailure,
+  });
+
+  final bool exists;
+  final bool supported;
+  final Object? setFailure;
+  final Object? queryFailure;
+  final List<bool> setCalls = <bool>[];
+
+  @override
+  bool get isSupported => supported;
+
+  @override
+  Future<bool> isEnabled() async {
+    if (queryFailure != null) throw queryFailure!;
+    return exists;
+  }
+
+  @override
+  Future<void> setEnabled(bool enabled) async {
+    setCalls.add(enabled);
+    if (setFailure != null) throw setFailure!;
+  }
+}
+
 void main() {
   group('Non-Windows fallbacks', () {
     test('the null guard always reports first instance', () {
@@ -66,6 +97,56 @@ void main() {
       expect(scheduler.isSupported, isFalse);
       expect(await scheduler.isEnabled(), isFalse);
       expect(scheduler.setEnabled(true), throwsUnsupportedError);
+    });
+
+    group('upgrading the auto-refresh task at app start', () {
+      test('re-registers an existing task so an old daily one becomes hourly',
+          () async {
+        final _FakeScheduler scheduler = _FakeScheduler(exists: true);
+
+        await refreshAutoRefreshTask(scheduler);
+
+        expect(scheduler.setCalls, <bool>[true]);
+      });
+
+      test('creates nothing when auto-refresh is off', () async {
+        final _FakeScheduler scheduler = _FakeScheduler(exists: false);
+
+        await refreshAutoRefreshTask(scheduler);
+
+        expect(scheduler.setCalls, isEmpty);
+      });
+
+      test('does nothing on an OS without a scheduler', () async {
+        final _FakeScheduler scheduler = _FakeScheduler(
+          exists: true,
+          supported: false,
+        );
+
+        await refreshAutoRefreshTask(scheduler);
+
+        expect(scheduler.setCalls, isEmpty);
+      });
+
+      test('a failed re-register does not throw', () async {
+        final _FakeScheduler scheduler = _FakeScheduler(
+          exists: true,
+          setFailure: BackgroundRefreshException('schtasks failed'),
+        );
+
+        await expectLater(refreshAutoRefreshTask(scheduler), completes);
+        expect(scheduler.setCalls, <bool>[true]);
+      });
+
+      test('a failed query does not throw', () async {
+        final _FakeScheduler scheduler = _FakeScheduler(
+          exists: true,
+          queryFailure: BackgroundRefreshException('schtasks failed'),
+        );
+
+        await expectLater(refreshAutoRefreshTask(scheduler), completes);
+        expect(scheduler.setCalls, isEmpty);
+      });
     });
 
     test('the running marker is a no-op that still disposes cleanly', () {
@@ -257,7 +338,7 @@ void main() {
             WindowsBackgroundRefreshScheduler.taskDefinitionXml();
 
         test('catches up a run missed while the machine was off', () {
-          // Signatures last 7 days; a laptop closed at noon must not just skip.
+          // Signatures last 7 days; a laptop closed on the hour must not just skip.
           expect(xml, contains('<StartWhenAvailable>true</StartWhenAvailable>'));
         });
 
@@ -274,18 +355,42 @@ void main() {
           );
         });
 
-        test('does not overlap a slow run with the next day', () {
+        test('does not overlap a slow run with the next hour', () {
           expect(
             xml,
             contains('<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>'),
           );
         });
 
-        test('runs this executable headlessly, daily at noon', () {
+        test('runs this executable headlessly', () {
           expect(xml, contains('<Arguments>--auto-refresh</Arguments>'));
           expect(xml, contains(Platform.resolvedExecutable));
-          expect(xml, contains('<StartBoundary>2026-01-01T12:00:00</StartBoundary>'));
+        });
+
+        test('repeats every hour, all day, on a daily trigger from midnight',
+            () {
+          expect(xml, contains('<StartBoundary>2026-01-01T00:00:00</StartBoundary>'));
           expect(xml, contains('<DaysInterval>1</DaysInterval>'));
+          expect(
+            xml,
+            contains(
+              '<Repetition>\n'
+              '        <Interval>PT1H</Interval>\n'
+              '        <Duration>P1D</Duration>\n'
+              '        <StopAtDurationEnd>false</StopAtDurationEnd>\n'
+              '      </Repetition>',
+            ),
+          );
+        });
+
+        test('keeps the settings that make an unattended run reliable', () {
+          expect(
+            xml,
+            contains('<RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>'),
+          );
+          expect(xml, contains('<LogonType>InteractiveToken</LogonType>'));
+          expect(xml, contains('<RunLevel>LeastPrivilege</RunLevel>'));
+          expect(xml, contains('<ExecutionTimeLimit>PT1H</ExecutionTimeLimit>'));
         });
 
         test('is well-formed XML', () {

@@ -34,7 +34,7 @@ import 'viewmodels/theme_controller.dart';
 import 'viewmodels/update_view_model.dart';
 
 Future<void> main(List<String> args) async {
-  // The scheduled daily refresh runs headless and must never build a window.
+  // The scheduled hourly refresh runs headless and must never build a window.
   if (AutoRefreshRunner.isRequested(args)) {
     exit(await AutoRefreshRunner.run());
   }
@@ -236,6 +236,8 @@ class _IpaSideAppState extends State<IpaSideApp> with WindowListener {
     // And ask whether Apple's device service is even there, because if it is not,
     // "no device connected" is the wrong thing for any screen to be saying.
     _appleSupport.refresh();
+    // A task an older build registered as daily-noon becomes the hourly one.
+    unawaited(refreshAutoRefreshTask(_scheduler));
   }
 
   @override

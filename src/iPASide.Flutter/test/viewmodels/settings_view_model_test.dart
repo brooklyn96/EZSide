@@ -279,7 +279,7 @@ void main() {
       expect(model.hasAutoRefreshMessage, isFalse);
     });
 
-    test('enabling confirms the daily schedule', () async {
+    test('enabling confirms the hourly schedule', () async {
       final SettingsViewModel model = await load();
 
       await model.setAutoRefreshEnabled(true);
@@ -287,7 +287,7 @@ void main() {
       expect(scheduler.setCalls, <bool>[true]);
       expect(scheduler.enabled, isTrue);
       expect(model.autoRefreshEnabled, isTrue);
-      expect(model.autoRefreshMessage, 'On \u2014 runs daily at noon.');
+      expect(model.autoRefreshMessage, 'On \u2014 checks every hour.');
       expect(model.hasAutoRefreshMessage, isTrue);
       expect(model.isAutoRefreshMessageError, isFalse);
       expect(model.autoRefreshBusy, isFalse);
@@ -358,7 +358,7 @@ void main() {
       await pending;
 
       expect(model.autoRefreshBusy, isFalse);
-      expect(model.autoRefreshMessage, 'On \u2014 runs daily at noon.');
+      expect(model.autoRefreshMessage, 'On \u2014 checks every hour.');
     });
 
     test('setting the value it already has does nothing', () async {

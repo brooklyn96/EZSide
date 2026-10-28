@@ -39,6 +39,7 @@ from . import (
     signing,
     tweak,
 )
+from ._asyncutil import run
 from .errors import EngineError
 
 _STATUS_GLYPH = {"ok": "[ OK ]", "warn": "[WARN]", "fail": "[FAIL]"}
@@ -615,6 +616,24 @@ def _stale_records(
     return stale
 
 
+def _phone_error(udid: str | None, probes: dict[str, Exception | None]) -> Exception | None:
+    """Why the phone a record names cannot be reached now, or None when it answered.
+
+    Asked before an app's Apple calls, so a phone that is asleep or off the network costs
+    nothing but one connection attempt. ``probes`` keeps the answer for the whole run:
+    every due app on one phone shares one probe, and a record with no UDID is not probed.
+    """
+    if not udid:
+        return None
+    if udid not in probes:
+        try:
+            run(lockdown.probe(udid))
+            probes[udid] = None
+        except Exception as exc:  # reported per app, like any other refresh failure
+            probes[udid] = exc
+    return probes[udid]
+
+
 def _cmd_refresh(args: argparse.Namespace) -> int:
     with refresh.operation_lock():
         if args.bundle_id:
@@ -639,10 +658,27 @@ def _cmd_refresh(args: argparse.Namespace) -> int:
         by_app: dict[str, dict[str, Any]] = {}  # one entry per app, latest outcome
         attempted: set[tuple[str, str | None]] = set()  # (bundle id, serial it was for)
         failed: set[str] = set()
+        probes: dict[str, Exception | None] = {}  # udid -> why it is unreachable, or None
         batch: list[tuple[dict[str, Any], str | None]] = [(t, None) for t in targets]
         while True:
             for entry, serial in batch:
                 attempted.add((entry["bundle_id"], serial))
+                gone = _phone_error(entry.get("udid"), probes)
+                if gone is not None:
+                    # No Apple call for an app whose phone cannot be reached. An unattended
+                    # run is retried every hour, so it stays quiet while the app still has
+                    # a day or more left and only reports one that is close to expiry; an
+                    # unknown expiry is treated as close.
+                    days = entry.get("days_left")
+                    waiting = (args.unattended and isinstance(gone, device.DeviceError)
+                               and days is not None and days >= 1.0)
+                    failed.add(entry["bundle_id"])
+                    by_app[entry["bundle_id"]] = {
+                        "bundle_id": entry["bundle_id"],
+                        "status": "deferred" if waiting else "error",
+                        "refresh_mode": None, "error": str(gone),
+                    }
+                    continue
                 try:
                     res = sideload.refresh_record(
                         entry,
@@ -1504,6 +1540,11 @@ def build_parser() -> argparse.ArgumentParser:
     refresh_parser.add_argument(
         "--resign", action="store_true",
         help="always re-sign and reinstall, never just install a new profile",
+    )
+    refresh_parser.add_argument(
+        "--unattended", action="store_true",
+        help="the scheduled run: an app whose phone is not reachable is deferred, "
+             "not failed, while it still has a day or more left",
     )
 
     signed_parser = sub.add_parser(

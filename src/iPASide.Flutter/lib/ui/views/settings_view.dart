@@ -265,19 +265,22 @@ class _AutoRefreshSection extends StatelessWidget {
         label: 'AUTO-REFRESH',
         children: [
           SettingsRow(
-            title: 'Enable daily background auto-refresh',
+            title: 'Enable background auto-refresh',
             description:
                 'Re-sign your sideloaded apps before their 7-day free signature '
-                'expires. Windows runs this daily around midday, and EZSide does '
-                'not need to be open \u2014 but your iPhone must be plugged in and '
-                'you must still be signed in to your Apple ID. A day the PC was '
-                'off is caught up once it is back on.',
+                'expires. Windows checks every hour and refreshes the apps that '
+                'are close to expiry, and EZSide does not need to be open. Your '
+                'iPhone must be reachable \u2014 plugged in, or on the same Wi-Fi '
+                'as this PC with Wi-Fi sync turned on (a cable is the most '
+                'reliable) \u2014 and you must still be signed in to your Apple '
+                'ID. If the iPhone is not reachable, it is tried again the next '
+                'hour.',
             control: AppToggle(
               value: vm.autoRefreshEnabled,
               onChanged: vm.autoRefreshBusy ? null : vm.setAutoRefreshEnabled,
               // The row's title is drawn to the left of the switch, not inside
               // it, so the switch needs the name passed explicitly.
-              semanticsLabel: 'Enable daily background auto-refresh',
+              semanticsLabel: 'Enable background auto-refresh',
             ),
             detail: vm.hasAutoRefreshMessage
                 ? SettingsStatusLine(

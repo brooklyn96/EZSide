@@ -360,12 +360,17 @@ class EngineApi {
   /// When some apps fail the engine exits 2 but still sends the per-app list, so
   /// that list is returned rather than thrown away; callers MUST inspect
   /// [RefreshSummary.refreshed]. Any other failure throws.
+  ///
+  /// [unattended] is for the scheduled run only: the engine then checks the phone
+  /// first and reports an unreachable one as `deferred` (try again next time) while
+  /// the app still has a day left, instead of as an error.
   Future<RefreshSummary> refresh({
     String? bundleId,
     bool all = false,
     bool keepSigned = false,
     String? signedDirectory,
     String? connection,
+    bool unattended = false,
     void Function(SideloadProgress progress)? onProgress,
   }) async {
     final List<String> args = <String>['refresh'];
@@ -375,6 +380,7 @@ class EngineApi {
     } else if (all) {
       args.add('--all');
     }
+    if (unattended) args.add('--unattended');
     args.addAll(_targetArgs(null, connection));
     args.addAll(_signedOutputArgs(keepSigned, signedDirectory));
 

@@ -742,6 +742,31 @@ void main() {
       );
     });
 
+    test('refresh adds --unattended only when asked', () async {
+      final _FakeRunner runner = _FakeRunner(
+        result: const EngineResult(
+          ok: true,
+          data: <String, dynamic>{'refreshed': <dynamic>[]},
+        ),
+      );
+      final EngineApi api = EngineApi(runner);
+
+      await api.refresh(unattended: true);
+      expect(runner.lastArgs, <String>['refresh', '--unattended']);
+
+      await api.refresh(unattended: true, connection: 'wifi', keepSigned: true);
+      expect(runner.lastArgs, <String>[
+        'refresh',
+        '--unattended',
+        '--connection',
+        'wifi',
+        '--keep-signed',
+      ]);
+
+      await api.refresh(all: true);
+      expect(runner.lastArgs, isNot(contains('--unattended')));
+    });
+
     test('refresh names a forced transport, and never a device', () async {
       // A refresh reinstalls onto the device its record names, so --udid would mean
       // nothing; the transport is a preference about this PC, and the unattended run

@@ -80,6 +80,29 @@ void main() {
       expect(lines, <String>['$_utcStamp com.a error: no device']);
     });
 
+    test('renders a deferred app as waiting, not as an error', () {
+      final List<String> lines = AutoRefreshLog.formatLines(
+        _utc,
+        const RefreshSummary(
+          refreshed: <RefreshEntry>[
+            RefreshEntry(
+              bundleId: 'com.a',
+              status: 'deferred',
+              error: 'Device X is not connected. Reconnect it.',
+            ),
+            RefreshEntry(bundleId: 'com.b', status: 'deferred', error: '  '),
+            RefreshEntry(bundleId: 'com.c', status: 'deferred'),
+          ],
+        ),
+      );
+
+      expect(lines, <String>[
+        '$_utcStamp com.a waiting: Device X is not connected. Reconnect it.',
+        '$_utcStamp com.b waiting: iPhone not reachable',
+        '$_utcStamp com.c waiting: iPhone not reachable',
+      ]);
+    });
+
     test('substitutes a default reason for a blank error', () {
       final List<String> lines = AutoRefreshLog.formatLines(
         _utc,

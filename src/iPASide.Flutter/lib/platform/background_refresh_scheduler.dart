@@ -23,7 +23,7 @@ class BackgroundRefreshException implements Exception {
   String toString() => 'BackgroundRefreshException: $message';
 }
 
-/// OS-level daily background refresh: schedules a headless
+/// OS-level hourly background refresh: schedules a headless
 /// `EZSide --auto-refresh` run that re-signs apps whose free-account signature
 /// is about to expire, without the UI running.
 abstract class BackgroundRefreshScheduler {
@@ -48,8 +48,8 @@ BackgroundRefreshScheduler createBackgroundRefreshScheduler() =>
     ? const WindowsBackgroundRefreshScheduler()
     : const UnsupportedBackgroundRefreshScheduler();
 
-/// Manages the "EZSide Auto-Refresh" Windows Scheduled Task - daily at noon,
-/// running `"{exe}" --auto-refresh` - through `schtasks.exe`.
+/// Manages the "EZSide Auto-Refresh" Windows Scheduled Task - every hour, all
+/// day, running `"{exe}" --auto-refresh` - through `schtasks.exe`.
 class WindowsBackgroundRefreshScheduler implements BackgroundRefreshScheduler {
   /// Creates the scheduler; it holds no state between calls.
   const WindowsBackgroundRefreshScheduler();
@@ -80,7 +80,7 @@ class WindowsBackgroundRefreshScheduler implements BackgroundRefreshScheduler {
       return;
     }
 
-    // Registered from XML rather than with `/SC DAILY /ST 12:00`, because the
+    // Registered from XML rather than with `/SC HOURLY`, because the
     // command-line form cannot reach the three settings that decide whether this
     // ever actually runs, and its defaults are wrong for us on all three.
     final File definition = File(
@@ -116,21 +116,24 @@ class WindowsBackgroundRefreshScheduler implements BackgroundRefreshScheduler {
     }
   }
 
-  /// The task definition: daily at noon, running the app headlessly.
+  /// The task definition: every hour, running the app headlessly.
   ///
   /// Three settings are the whole reason this is XML rather than a command line,
   /// and each one is a way the feature silently does nothing:
   ///
-  /// * `StartWhenAvailable` — without it a machine that is off or asleep at noon
-  ///   simply skips the run, and nothing retries it. Signatures last 7 days, so a
-  ///   laptop that is closed at lunchtime would let apps expire while the toggle
-  ///   sat there saying it was on.
+  /// * `StartWhenAvailable` — without it a machine that is off or asleep on the
+  ///   hour simply skips the run, and nothing retries it. Signatures last 7 days,
+  ///   so a laptop that stays closed would let apps expire while the toggle sat
+  ///   there saying it was on.
   /// * `DisallowStartIfOnBatteries` — Windows defaults this to true, so on an
   ///   unplugged laptop the task would not start at all.
   /// * `StopIfGoingOnBatteries` — also true by default, so pulling the charger
   ///   mid-run would kill a refresh, potentially between signing and installing.
   ///
-  /// `IgnoreNew` keeps a slow run from being overlapped by the next day's.
+  /// `IgnoreNew` keeps a slow run from being overlapped by the next hour's.
+  ///
+  /// The hourly cadence is a daily trigger from 00:00 that repeats every hour for
+  /// a day without stopping a run in progress at the end of it.
   @visibleForTesting
   static String taskDefinitionXml() => _taskXml();
 
@@ -150,7 +153,12 @@ class WindowsBackgroundRefreshScheduler implements BackgroundRefreshScheduler {
   </RegistrationInfo>
   <Triggers>
     <CalendarTrigger>
-      <StartBoundary>2026-01-01T12:00:00</StartBoundary>
+      <Repetition>
+        <Interval>PT1H</Interval>
+        <Duration>P1D</Duration>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+      <StartBoundary>2026-01-01T00:00:00</StartBoundary>
       <Enabled>true</Enabled>
       <ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay>
     </CalendarTrigger>
@@ -231,4 +239,21 @@ class UnsupportedBackgroundRefreshScheduler
   Future<void> setEnabled(bool enabled) async => throw UnsupportedError(
     'Background auto-refresh scheduling is not supported on this OS.',
   );
+}
+
+/// Brings a task registered by an older build up to date.
+///
+/// An install that turned auto-refresh on while it was a daily-noon task keeps
+/// that task until it is registered again, so every app start re-registers it
+/// (`/F`, same name) when it exists. When auto-refresh is off nothing is
+/// created. A failure here is swallowed: the old task still runs, and a start-up
+/// check must never stop the app from opening.
+Future<void> refreshAutoRefreshTask(BackgroundRefreshScheduler scheduler) async {
+  try {
+    if (scheduler.isSupported && await scheduler.isEnabled()) {
+      await scheduler.setEnabled(true);
+    }
+  } catch (_) {
+    // Left as it is; Settings shows the real state and any error on toggle.
+  }
 }

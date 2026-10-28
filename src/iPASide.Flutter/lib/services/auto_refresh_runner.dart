@@ -25,8 +25,11 @@ import 'settings_store.dart';
 ///
 /// When the run throws, or any app comes back with status `error`, one native
 /// warning box is shown AFTER the engine has exited and the log is written, and
-/// the exit code is 1. Nothing is shown when nothing was due or all succeeded.
-/// The running-app marker stays held until the box is closed.
+/// the exit code is 1. Nothing is shown when nothing was due or all succeeded,
+/// and an app the engine `deferred` (phone not reachable, time left) is logged as
+/// waiting and counts as neither. The box is shown at most once per 20 hours
+/// (see [AppPaths.autoRefreshNoticeStampPath]); the exit code does not depend on
+/// it. The running-app marker stays held until the box is closed.
 ///
 /// [run] must be awaited before any window is created, and its result passed to
 /// `exit`.
@@ -54,11 +57,15 @@ abstract final class AutoRefreshRunner {
   ///
   /// [notice] replaces the message box, for the same reason: tests must not open
   /// a real window.
+  ///
+  /// [now] replaces the clock, so the 20-hour notice limit can be proven without
+  /// waiting.
   static Future<int> run({
     AppPaths? paths,
     SettingsStore? settings,
     EngineCommandRunner? transport,
     NoticeDialog notice = showWarningNotice,
+    DateTime Function() now = DateTime.now,
   }) async {
     final AppPaths appPaths = paths ?? AppPaths.instance;
     final SettingsStore store = settings ?? SettingsStore(paths: appPaths);
@@ -88,11 +95,14 @@ abstract final class AutoRefreshRunner {
           // transport the user chose has to hold for the unattended run too.
           // 'auto' is dropped on the way out, so it costs nothing to pass.
           connection: store.loadConnection(),
+          // A phone that is asleep or off the network is tried again next hour
+          // rather than reported; only a real failure counts below.
+          unattended: true,
         );
         if (summary.refreshed.isEmpty) {
-          lines.add(AutoRefreshLog.formatNothingToRefresh(DateTime.now()));
+          lines.add(AutoRefreshLog.formatNothingToRefresh(now()));
         } else {
-          lines.addAll(AutoRefreshLog.formatLines(DateTime.now(), summary));
+          lines.addAll(AutoRefreshLog.formatLines(now(), summary));
           failedApps = summary.refreshed
               .where((RefreshEntry entry) => entry.status == 'error')
               .length;
@@ -103,7 +113,7 @@ abstract final class AutoRefreshRunner {
       }
     } catch (error) {
       lines.add(
-        AutoRefreshLog.formatRunFailure(DateTime.now(), _messageOf(error)),
+        AutoRefreshLog.formatRunFailure(now(), _messageOf(error)),
       );
       exitCode = 1;
     }
@@ -112,9 +122,13 @@ abstract final class AutoRefreshRunner {
     // alive, and the installer must still see EZSide running meanwhile.
     try {
       await _appendLines(appPaths.autoRefreshLogPath, lines);
-      if (exitCode != 0) {
+      // The task runs every hour, so a failure that persists must not raise a
+      // box every hour; the log above still records every run.
+      final String stampPath = appPaths.autoRefreshNoticeStampPath;
+      if (exitCode != 0 && _noticeDue(stampPath, now())) {
         try {
           notice('EZSide', failureText(failedApps));
+          _writeNoticeStamp(stampPath, now());
         } catch (_) {
           // The log already holds the failure; a notice that cannot be shown
           // must not change the exit code.
@@ -138,6 +152,34 @@ abstract final class AutoRefreshRunner {
     return '$english\n$vietnamese\n\n'
         'Open EZSide > Library to retry.\n'
         'Mở EZSide > Library để thử lại.';
+  }
+
+  /// At most one failure notice per this long.
+  static const Duration _noticeInterval = Duration(hours: 20);
+
+  /// True unless a notice was shown less than [_noticeInterval] before [at].
+  ///
+  /// A missing, unreadable or garbled stamp, or one in the future, means "no
+  /// notice shown yet": a notice that is shown twice is better than one that is
+  /// never shown. Never throws, so it cannot change the exit code.
+  static bool _noticeDue(String stampPath, DateTime at) {
+    try {
+      final DateTime? last =
+          DateTime.tryParse(File(stampPath).readAsStringSync().trim());
+      if (last == null) return true;
+      final Duration since = at.difference(last);
+      return since.isNegative || since >= _noticeInterval;
+    } catch (_) {
+      return true;
+    }
+  }
+
+  static void _writeNoticeStamp(String stampPath, DateTime at) {
+    try {
+      File(stampPath).writeAsStringSync(at.toUtc().toIso8601String());
+    } catch (_) {
+      // Worst case the next failure shows its notice again.
+    }
   }
 
   static String _messageOf(Object error) =>
