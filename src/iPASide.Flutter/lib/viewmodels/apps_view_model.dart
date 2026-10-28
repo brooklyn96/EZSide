@@ -125,7 +125,11 @@ class AppsViewModel extends BaseViewModel {
     );
     if (!confirmed) return;
 
-    if (_devices.isTargetGone(udid, wasEmpty: wasEmpty)) {
+    // A list shown with no UDID came from a listing that failed; once phones
+    // are listed, an uninstall without one would let the engine pick any of
+    // them, which need not be the phone that list described.
+    if (_devices.isTargetGone(udid, wasEmpty: wasEmpty) ||
+        (udid == null && _devices.hasDevices)) {
       await _dialogs.alert(
         title: "Couldn't uninstall",
         message: DeviceSelection.targetGoneMessage,
