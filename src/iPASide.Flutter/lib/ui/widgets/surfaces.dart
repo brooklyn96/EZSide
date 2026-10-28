@@ -172,7 +172,13 @@ class Alert extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 if (title != null)
-                  Text(title!, style: context.t.semi(FontSizes.body).copyWith(color: fg)),
+                  Text(
+                    title!,
+                    // The accent is too dark for body text on dark; focusRing is its text tint.
+                    style: context.t.semi(FontSizes.body).copyWith(
+                          color: kind == AlertKind.info ? p.focusRing : fg,
+                        ),
+                  ),
                 if (title != null && (message != null || body != null))
                   const SizedBox(height: Space.s1),
                 if (message != null) Text(message!, style: context.t.small),
