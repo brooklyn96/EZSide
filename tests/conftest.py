@@ -16,20 +16,27 @@ if str(ENGINE_DIR) not in sys.path:
 def isolated_app_data(tmp_path_factory, monkeypatch):
     """Point ipaside_engine.paths at a throwaway data directory, for every test.
 
-    Everything in ``paths`` is derived from IPASIDE_DATA_DIR (removed here, so a
-    developer's own override cannot leak in) or LOCALAPPDATA, and most of it creates
+    Everything in ``paths`` is derived from ``data_dir()``, and most of it creates
     directories just by being called, so a test that touches the engine without
-    asking for isolation writes into the real %LOCALAPPDATA%\\EZSide - a stray
+    asking for isolation writes into real app data - a stray
     tweaks/fixture/Fixture.dylib from an older version of this suite is still
     sitting there. Autouse makes isolation the default: reaching real user data
     now takes a deliberate opt-out rather than merely forgetting to opt in.
+
+    IPASIDE_DATA_DIR is set (not just removed) to ``<root>/EZSide``, the same place the
+    LOCALAPPDATA default resolves to. ``data_dir()`` prefers the installed layout
+    (``<install>\\data``, derived from ``sys.executable``) over LOCALAPPDATA, so when the
+    suite runs under an installed interpreter such as ``D:\\EZSide\\app\\engine\\python``
+    redirecting LOCALAPPDATA alone would still write into that real install. The
+    override wins over both, whatever interpreter runs the suite. LOCALAPPDATA is
+    redirected too, for code that reads it directly.
 
     A directory of its own, not ``tmp_path``, so app data never mixes in with the
     files a test lays out for itself.
     """
     root = tmp_path_factory.mktemp("appdata")
     monkeypatch.setenv("LOCALAPPDATA", str(root))
-    monkeypatch.delenv("IPASIDE_DATA_DIR", raising=False)
+    monkeypatch.setenv("IPASIDE_DATA_DIR", str(root / "EZSide"))
     return root
 
 
