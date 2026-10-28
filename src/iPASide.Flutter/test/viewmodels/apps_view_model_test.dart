@@ -574,6 +574,35 @@ void main() {
       expect(row.isRemoving, isFalse);
     });
 
+    test('a list shown after a failed listing uninstalls from no phone once '
+        'phones are listed', () async {
+      final _FakeRunner selectionRunner = _FakeRunner()
+        ..next('devices', _failed('usbmux is not answering'))
+        ..always(
+          'devices',
+          _ok(<dynamic>[
+            <String, dynamic>{'serial': _first, 'connection_type': 'USB'},
+          ]),
+        );
+      final DeviceSelection devices = DeviceSelection(
+        engine: EngineApi(selectionRunner),
+        settings: _FakeSettings(),
+      );
+      addTearDown(devices.dispose);
+      final _FakeRunner runner = _FakeRunner()
+        ..always('apps', _ok(<String, dynamic>{'com.a': _app(name: 'A')}));
+      final _FakeDialogs dialogs = _FakeDialogs()
+        ..whileConfirming = devices.refresh;
+      final AppsViewModel vm =
+          await _loaded(runner, dialogs, devices: devices);
+      expect(devices.hasError, isTrue);
+
+      await vm.uninstallRow(vm.rows.single);
+
+      expect(runner.callsTo('uninstall'), isEmpty);
+      expect(dialogs.alerts.single.message, DeviceSelection.targetGoneMessage);
+    });
+
     test('reloads when the selection moves to another phone', () async {
       // Otherwise one phone's apps sit on screen under another phone's name, and
       // the Uninstall beside each of them would be aimed at the new one.
