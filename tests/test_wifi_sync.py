@@ -25,14 +25,20 @@ class _MuxDev:
 
 
 class _Client:
-    def __init__(self, enabled=False, set_error=None):
+    def __init__(self, enabled=False, set_error=None, get_error=None):
         self.enabled = enabled
+        self.get_error = get_error
         self.set_error = set_error
         self.sets: list[bool] = []
         self.all_values = {"DeviceName": "Test iPhone"}
         self.closed = False
+        self.paired = True
+        self.gets = 0
 
     async def get_enable_wifi_connections(self):
+        self.gets += 1
+        if self.get_error is not None:
+            raise self.get_error
         return self.enabled
 
     async def set_enable_wifi_connections(self, value):
@@ -61,7 +67,9 @@ class _Harness:
         from pymobiledevice3 import lockdown as pmd_lockdown
 
         async def fake_create(serial=None, connection_type=None, **kwargs):
-            self.creates.append({"serial": serial, "connection_type": connection_type})
+            self.creates.append(
+                {"serial": serial, "connection_type": connection_type, **kwargs}
+            )
             client = self.client_factory()
             self.clients.append(client)
             return client
@@ -139,7 +147,9 @@ def test_usb_attach_with_sync_off_turns_it_on_once(monkeypatch):
         await h.push("add", _MuxDev(7, UDID, "USB"))
         await h.settle()
 
-        assert h.creates == [{"serial": UDID, "connection_type": "USB"}]
+        assert [(c["serial"], c["connection_type"], c["autopair"]) for c in h.creates] == [
+            (UDID, "USB", False)
+        ]
         assert h.clients[0].sets == [True]
         assert h.clients[0].closed
         assert h.notes == [
@@ -276,6 +286,64 @@ def test_re_listening_does_not_retry_a_phone_still_plugged_in(monkeypatch):
         await h.settle()
 
         assert len(h.creates) == 1
+        await h.finish()
+
+    _run(scenario())
+
+
+def test_an_unpaired_phone_is_left_alone(monkeypatch):
+    async def scenario():
+        def unpaired():
+            client = _Client()
+            client.paired = False
+            return client
+
+        h = _Harness(monkeypatch, unpaired)
+        await h.start()
+        await h.push("add", _MuxDev(7, UDID, "USB"))
+        await h.settle()
+
+        assert h.creates[0]["autopair"] is False
+        assert h.clients[0].gets == 0 and h.clients[0].sets == []
+        assert h.clients[0].closed
+        assert h.notes == []
+        await h.finish()
+
+    _run(scenario())
+
+
+def test_a_missing_switch_value_counts_as_off(monkeypatch):
+    from pymobiledevice3.exceptions import MissingValueError
+
+    async def scenario():
+        h = _Harness(monkeypatch, lambda: _Client(get_error=MissingValueError("no value", UDID, "16.7")))
+        await h.start()
+        await h.push("add", _MuxDev(7, UDID, "USB"))
+        await h.settle()
+
+        assert h.clients[0].sets == [True]
+        await h.finish()
+
+    _run(scenario())
+
+
+def test_a_phone_replugged_while_the_socket_was_down_is_tried_again(monkeypatch):
+    async def scenario():
+        h = _Harness(monkeypatch)
+        await h.start()
+        await h.push("add", _MuxDev(7, UDID, "USB"))
+        await h.settle()
+        assert len(h.creates) == 1
+
+        await h.push("drop")  # the phone is unplugged while the new socket is not up yet
+        while len(h.muxes) < 2:
+            await asyncio.sleep(0.01)
+        await h.push("add", _MuxDev(9, OTHER, "Network"))  # first announcement: no phone
+        await h.settle()
+        await h.push("add", _MuxDev(10, UDID, "USB"))  # plugged back in: a real attach
+        await h.settle()
+
+        assert [c["serial"] for c in h.creates] == [UDID, UDID]
         await h.finish()
 
     _run(scenario())
