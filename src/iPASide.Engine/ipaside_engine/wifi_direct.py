@@ -707,8 +707,12 @@ def _classes() -> tuple[type, type]:
         async def close(self) -> None:
             task, self._heartbeat = self._heartbeat, None
             if task is not None and task is not asyncio.current_task():
-                task.cancel()
-                await asyncio.wait({task}, timeout=STEP_TIMEOUT)
+                # Python 3.11's wait_for returns a read that finished in the same tick as
+                # a cancel and swallows the cancel, so cancel again until the task ends.
+                deadline = time.monotonic() + STEP_TIMEOUT
+                while not task.done() and time.monotonic() < deadline:
+                    task.cancel()
+                    await asyncio.wait({task}, timeout=0.05)
             for conn in self.connections:
                 await _close_bounded(conn)
             await _close_bounded(self.service)

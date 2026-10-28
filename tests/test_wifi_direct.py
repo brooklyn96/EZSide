@@ -1127,6 +1127,41 @@ def test_a_silent_service_with_a_live_heartbeat_fails_after_the_idle_read(monkey
     _run(scenario())
 
 
+def test_close_ends_a_heartbeat_whose_cancel_lands_in_the_same_tick_as_a_marco(monkeypatch, capfd):
+    # Python 3.11's wait_for swallows a cancel that arrives in the tick its read finishes
+    # in; close() must still end the heartbeat quickly, before the phone's next Marco,
+    # without the "heartbeat stopped" teardown, and with every connection closed.
+    monkeypatch.setattr(wifi_direct, "STEP_TIMEOUT", 3.0)
+    client, _requests = _pinned(monkeypatch)
+
+    class Beat(_Heartbeat):
+        def __init__(self):
+            super().__init__(marcos=0)
+            self.gate = None
+
+        async def recv_plist(self):
+            self.gate = gate = asyncio.Event()  # a Marco whenever the test sets it
+            await gate.wait()
+            return {"Command": "Marco", "Interval": 10}
+
+    async def scenario():
+        beat = Beat()
+        other = _Conn()
+        client.connections += [beat, other]
+        client._heartbeat = asyncio.create_task(wifi_direct._heartbeat(client, beat, 10))
+        await asyncio.sleep(0.05)
+        beat.gate.set()  # the Marco is delivered in the tick close() cancels the task in
+        start = time.monotonic()
+        await client.close()
+        assert time.monotonic() - start < 1.5, "well under STEP_TIMEOUT"
+        assert client._heartbeat is None
+        assert beat.closed and other.closed.is_set() and client.service.closed
+
+    _run(scenario())
+    assert "heartbeat stopped" not in capfd.readouterr().err
+    assert not client.dropped
+
+
 def test_an_idle_read_inside_the_heartbeat_still_closes_everything(monkeypatch):
     # Interval 30: the heartbeat's own read hits IDLE_READ first, and the teardown it
     # starts cancels the heartbeat task it runs under. The closing must survive that.
