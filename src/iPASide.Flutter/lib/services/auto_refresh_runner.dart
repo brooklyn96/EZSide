@@ -28,8 +28,10 @@ import 'settings_store.dart';
 /// the exit code is 1. Nothing is shown when nothing was due or all succeeded,
 /// and an app the engine `deferred` (phone not reachable, time left) is logged as
 /// waiting and counts as neither. The box is shown at most once per 20 hours
-/// (see [AppPaths.autoRefreshNoticeStampPath]); the exit code does not depend on
-/// it. The running-app marker stays held until the box is closed.
+/// (see [claimNotice]); the exit code does not depend on it. The running-app
+/// marker stays held until the box is closed. When the GUI is running (see
+/// [guiIsRunning]) the box is skipped and the stamp left alone: the GUI watches
+/// the log and shows the notice itself.
 ///
 /// [run] must be awaited before any window is created, and its result passed to
 /// `exit`.
@@ -60,12 +62,16 @@ abstract final class AutoRefreshRunner {
   ///
   /// [now] replaces the clock, so the 20-hour notice limit can be proven without
   /// waiting.
+  ///
+  /// [guiRunning] replaces the "is the GUI instance up" check, so tests do not
+  /// depend on a real EZSide being open.
   static Future<int> run({
     AppPaths? paths,
     SettingsStore? settings,
     EngineCommandRunner? transport,
     NoticeDialog notice = showWarningNotice,
     DateTime Function() now = DateTime.now,
+    bool Function() guiRunning = guiIsRunning,
   }) async {
     final AppPaths appPaths = paths ?? AppPaths.instance;
     final SettingsStore store = settings ?? SettingsStore(paths: appPaths);
@@ -123,13 +129,12 @@ abstract final class AutoRefreshRunner {
     try {
       await _appendLines(appPaths.autoRefreshLogPath, lines);
       // The task runs every hour, so a failure that persists must not raise a
-      // box every hour; the log above still records every run.
-      final String stampPath = appPaths.autoRefreshNoticeStampPath;
-      if (exitCode != 0 && _noticeDue(stampPath, now())) {
-        // Stamped BEFORE the box: it blocks until closed, and the task's
-        // 1-hour limit kills a process whose box nobody answered, so a stamp
-        // written afterwards would never exist in exactly the unattended case.
-        _writeNoticeStamp(stampPath, now());
+      // box every hour; the log above still records every run. With the GUI
+      // open it shows the notice (from this same log), so this run stays quiet
+      // and, above all, leaves the stamp for the GUI to claim.
+      if (exitCode != 0 &&
+          !guiRunning() &&
+          claimNotice(paths: appPaths, now: now())) {
         try {
           notice('EZSide', failureText(failedApps));
         } catch (_) {
@@ -157,14 +162,31 @@ abstract final class AutoRefreshRunner {
         'Mở EZSide > Library để thử lại.';
   }
 
-  /// At most one failure notice per this long.
-  static const Duration _noticeInterval = Duration(hours: 20);
-
-  /// True unless a notice was shown less than [_noticeInterval] before [at].
+  /// Checks the 20-hour limit and, when a failure notice may be shown now,
+  /// writes the stamp and returns true. The run and the GUI share this, so one
+  /// stamp throttles both.
+  ///
+  /// The stamp is written BEFORE the caller shows anything: a message box blocks
+  /// until closed and the task's 1-hour limit kills a process whose box nobody
+  /// answered, so a stamp written afterwards would never exist in exactly the
+  /// unattended case.
   ///
   /// A missing, unreadable or garbled stamp, or one in the future, means "no
   /// notice shown yet": a notice that is shown twice is better than one that is
-  /// never shown. Never throws, so it cannot change the exit code.
+  /// never shown. Never throws, so it cannot change the exit code. [paths]
+  /// defaults to [AppPaths.instance], [now] to the clock.
+  static bool claimNotice({AppPaths? paths, DateTime? now}) {
+    final String stampPath =
+        (paths ?? AppPaths.instance).autoRefreshNoticeStampPath;
+    final DateTime at = now ?? DateTime.now();
+    if (!_noticeDue(stampPath, at)) return false;
+    _writeNoticeStamp(stampPath, at);
+    return true;
+  }
+
+  /// At most one failure notice per this long.
+  static const Duration _noticeInterval = Duration(hours: 20);
+
   static bool _noticeDue(String stampPath, DateTime at) {
     try {
       final DateTime? last =
@@ -184,6 +206,12 @@ abstract final class AutoRefreshRunner {
       // Worst case the next failure shows its notice again.
     }
   }
+
+  /// True when a GUI instance is running: its single-instance mutex exists.
+  ///
+  /// Delegates to [singleInstanceIsHeld], which only opens the mutex. False off
+  /// Windows and on any error: an unanswered check must not silence the notice.
+  static bool guiIsRunning() => singleInstanceIsHeld();
 
   static String _messageOf(Object error) =>
       error is EngineException ? error.message : error.toString();

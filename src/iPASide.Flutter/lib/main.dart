@@ -1,16 +1,22 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'app_version.dart';
+import 'engine/auto_refresh_status.dart';
 import 'engine/engine.dart';
 import 'platform/app_paths.dart';
 import 'platform/background_refresh_scheduler.dart';
+import 'platform/native_dialog.dart';
 import 'platform/reduced_motion.dart';
 import 'platform/single_instance.dart';
+import 'platform/startup_registration.dart';
+import 'platform/tray_service.dart';
 import 'platform/windows_child_process_reaper.dart';
 import 'services/auto_refresh_runner.dart';
 import 'services/file_picker.dart';
@@ -41,14 +47,32 @@ Future<void> main(List<String> args) async {
 
   WidgetsFlutterBinding.ensureInitialized();
 
+  // The Run-key launch at sign-in: tray icon only, no window. The runner reads
+  // the same argument so the first frame does not show the window either.
+  final bool startHidden = args.any(
+    (String argument) =>
+        argument.toLowerCase() == StartupRegistration.trayArg,
+  );
+
   // Held for the whole process so the installer's AppMutex check sees a
   // running app and refuses to overwrite it.
   final marker = RunningAppMarker.hold();
 
+  // From the moment the mutex is held, a scheduled run leaves its failure
+  // notice to this process, so the baseline is taken before the mutex is: a
+  // run that finishes in between is then newer than the baseline and ours to
+  // report. One that checked the mutex before it was held showed its own box
+  // and claimed the stamp, so it is not reported twice.
+  final AutoRefreshWatch refreshWatch = AutoRefreshWatch(
+    logPath: AppPaths.instance.autoRefreshLogPath,
+    claimNotice: () => AutoRefreshRunner.claimNotice(),
+  );
+
   final guard = createSingleInstanceGuard();
   if (!guard.tryAcquire()) {
-    // A second launch exits silently rather than raising the existing window,
-    // matching the previous build.
+    // A second launch raises the running window, then exits. One from the Run
+    // key has nothing to show: the app is already in the tray.
+    if (!startHidden) showRunningInstance();
     marker.dispose();
     exit(0);
   }
@@ -84,6 +108,7 @@ Future<void> main(List<String> args) async {
     title: 'EZSide',
   );
   await windowManager.waitUntilReadyToShow(windowOptions, () async {
+    if (startHidden) return;
     await windowManager.show();
     await windowManager.focus();
   });
@@ -95,8 +120,35 @@ Future<void> main(List<String> args) async {
       settings: settings,
       startup: startup,
       reducedMotion: createReducedMotionProvider().isReducedMotion(),
+      startHidden: startHidden,
+      refreshWatch: refreshWatch,
     ),
   );
+}
+
+/// Tells the user that [run] failed: as a balloon from the tray icon when
+/// [balloon] can show one, else as the box the headless run shows when no GUI
+/// is open. Same words either way.
+Future<void> announceRefreshFailure(
+  AutoRefreshRun run, {
+  required Future<bool> Function(String title, String body) balloon,
+  required Future<void> Function(String title, String body) box,
+}) async {
+  final String body = AutoRefreshRunner.failureText(run.failedApps);
+  if (await balloon('EZSide', body)) return;
+  await box('EZSide', body);
+}
+
+/// The warning box, on its own isolate: it blocks until closed, and the window
+/// must keep drawing meanwhile.
+Future<void> _showBoxOffThread(String title, String body) =>
+    Isolate.run(() => showWarningNotice(title, body));
+
+/// Brings the window back from the tray, a minimize, or behind other windows.
+Future<void> showMainWindow() async {
+  await windowManager.show();
+  if (await windowManager.isMinimized()) await windowManager.restore();
+  await windowManager.focus();
 }
 
 /// Tears the app down in the order the user feels it: the window disappears
@@ -133,6 +185,8 @@ class IpaSideApp extends StatefulWidget {
     required this.settings,
     required this.startup,
     required this.reducedMotion,
+    this.startHidden = false,
+    required this.refreshWatch,
   });
 
   final EngineClient engineClient;
@@ -143,6 +197,13 @@ class IpaSideApp extends StatefulWidget {
   final SettingsStore settings;
   final StartupOptions startup;
   final bool reducedMotion;
+
+  /// Launched with `--tray`: the window stays hidden until the tray opens it.
+  final bool startHidden;
+
+  /// Reads what the scheduled task's runs wrote; the app never runs a refresh
+  /// timer of its own. Built in [main] as soon as the mutex is held.
+  final AutoRefreshWatch refreshWatch;
 
   @override
   State<IpaSideApp> createState() => _IpaSideAppState();
@@ -208,22 +269,35 @@ class _IpaSideAppState extends State<IpaSideApp> with WindowListener {
 
   late final UpdateViewModel _updates = UpdateViewModel(
     service: UpdateService(currentVersion: resolvedAppVersion),
-    // Same tear-down as the window Close button: hide first, then end the
-    // engine, then destroy. The silent installer is already running and waits
-    // on AppMutex until this process exits.
-    exitForUpdate: () => runShutdownSequence(
-      hideWindow: windowManager.hide,
-      disposeEngine: widget.engineClient.dispose,
-      destroyWindow: windowManager.destroy,
-    ),
+    // Same tear-down as tray Quit, minus the last notice. The silent installer
+    // is already running and waits on AppMutex until this process exits.
+    exitForUpdate: () => _quit(lastNotice: false),
   );
+
+  final TrayService _tray = TrayService();
+  final StartupRegistration _startupRegistration = StartupRegistration();
+  final StartupStateSignal _startupSignal = StartupStateSignal();
+  late final AutoRefreshWatch _refreshWatch = widget.refreshWatch;
+  Timer? _refreshPoll;
+  Future<void>? _quitting;
+
+  /// How long a `--tray` launch waits for the shell to take the icon (it may
+  /// still be starting at sign-in) before it shows the window instead.
+  static const Duration _trayWait = Duration(minutes: 2);
 
   @override
   void initState() {
     super.initState();
     windowManager.addListener(this);
-    // Intercept the close so the engine is shut down before the window dies.
+    // Intercept the close: it hides into the tray, or, with no tray, shuts the
+    // engine down before the window dies.
     windowManager.setPreventClose(true);
+    // Whatever the tray does: with the GUI up, a failed run's notice is ours.
+    _refreshPoll = Timer.periodic(
+      AutoRefreshWatch.pollInterval,
+      (_) => _pollRefreshLog(),
+    );
+    unawaited(_startTray());
     // A version comparison only — nothing is downloaded without being asked.
     _updates.check();
     // Live usbmux Attached/Detached first, then a one-shot listing so the first
@@ -242,6 +316,7 @@ class _IpaSideAppState extends State<IpaSideApp> with WindowListener {
 
   @override
   void dispose() {
+    _refreshPoll?.cancel();
     windowManager.removeListener(this);
     _updates.dispose();
     _dropRouter.dispose();
@@ -253,14 +328,134 @@ class _IpaSideAppState extends State<IpaSideApp> with WindowListener {
     super.dispose();
   }
 
+  /// Close hides into the tray, and the engine keeps running so Listen, the
+  /// remembered phones and Wi-Fi sync carry on. Only while no tray icon is
+  /// there to come back through does Close quit.
   @override
-  void onWindowClose() => unawaited(
-        runShutdownSequence(
-          hideWindow: windowManager.hide,
-          disposeEngine: widget.engineClient.dispose,
-          destroyWindow: windowManager.destroy,
+  void onWindowClose() =>
+      unawaited(_tray.isReady ? windowManager.hide() : _quit());
+
+  /// The full tear-down, for tray Quit (menu or WM_CLOSE) and the updater
+  /// only: the window and the icon disappear first, the engine is ended after.
+  /// Runs once, however many of them ask.
+  ///
+  /// With [lastNotice], a run that failed since the last poll is still
+  /// reported, as the box: a balloon would die with the icon. The updater
+  /// passes false, because Setup is waiting on this process; the unread
+  /// failure keeps its stamp unclaimed, so the next failing run reports it.
+  Future<void> _quit({bool lastNotice = true}) =>
+      _quitting ??= _shutDown(lastNotice: lastNotice);
+
+  Future<void> _shutDown({required bool lastNotice}) async {
+    try {
+      await runShutdownSequence(
+        hideWindow: () async {
+          _refreshPoll?.cancel();
+          final AutoRefreshRun? failed =
+              lastNotice ? _refreshWatch.poll() : null;
+          await _tray.dispose();
+          await windowManager.hide();
+          if (failed != null) {
+            await announceRefreshFailure(
+              failed,
+              balloon: (_, _) async => false,
+              box: _showBoxOffThread,
+            );
+          }
+        },
+        disposeEngine: widget.engineClient.dispose,
+        destroyWindow: windowManager.destroy,
+      );
+    } catch (error) {
+      // A step failed with the window hidden and the icon gone, so nothing is
+      // left to reach this process through: end it. The job object takes the
+      // engine with it.
+      developer.log('quit: $error', name: 'ipaside.tray');
+      exit(0);
+    }
+  }
+
+  Future<void> _startTray() async {
+    final bool ready = await _tray.init(
+      onItem: _onTrayItem,
+      onMenuOpening: _showStartupState,
+    );
+    await _tray.setStatus(_refreshWatch.statusLine);
+    if (ready || !widget.startHidden) return;
+    // Nothing to open a hidden window from yet: give the shell time to come
+    // up, but never leave the window hidden with no way back to it.
+    if (!_tray.isAvailable || !await _tray.waitUntilReady(_trayWait)) {
+      await showMainWindow();
+    }
+  }
+
+  void _onTrayItem(TrayMenuItem item) {
+    switch (item) {
+      case TrayMenuItem.open:
+        unawaited(showMainWindow());
+        _startupSignal.changed();
+      case TrayMenuItem.refreshNow:
+        unawaited(_refreshNow());
+      case TrayMenuItem.startWithWindows:
+        unawaited(_toggleStartup());
+      case TrayMenuItem.quit:
+        unawaited(_quit());
+    }
+  }
+
+  void _pollRefreshLog() {
+    final AutoRefreshRun? failed = _refreshWatch.poll();
+    unawaited(_tray.setStatus(_refreshWatch.statusLine));
+    if (failed != null) {
+      unawaited(
+        announceRefreshFailure(
+          failed,
+          balloon: _tray.showNotice,
+          box: _showBoxOffThread,
         ),
       );
+    }
+  }
+
+  /// The same unattended, due-only run as the scheduled task, as its own
+  /// process; its result arrives through the log like any other run's.
+  Future<void> _refreshNow() async {
+    if (_refreshWatch.refreshing) return;
+    try {
+      await Process.start(
+        Platform.resolvedExecutable,
+        const <String>[AutoRefreshRunner.cliArgument],
+        mode: ProcessStartMode.detached,
+      );
+    } on ProcessException catch (error) {
+      developer.log('refresh now: $error', name: 'ipaside.tray');
+      return;
+    }
+    _refreshWatch.manualStarted();
+    await _tray.setStatus(_refreshWatch.statusLine);
+  }
+
+  Future<void> _toggleStartup() async {
+    try {
+      await _startupRegistration.setEnabled(
+        !await _startupRegistration.isEnabled(),
+      );
+    } on StartupRegistrationException catch (error) {
+      developer.log('start with Windows: $error', name: 'ipaside.tray');
+    }
+    _startupSignal.changed();
+  }
+
+  /// The real registry state, read each time the menu opens.
+  Future<void> _showStartupState() async {
+    bool on = false;
+    try {
+      on = await _startupRegistration.isEnabled();
+    } on StartupRegistrationException {
+      // Shown unchecked; the toggle reports nothing more than that.
+    }
+    await _tray.setStartupChecked(on);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -272,6 +467,7 @@ class _IpaSideAppState extends State<IpaSideApp> with WindowListener {
         Provider<FilePickerService>.value(value: _picker),
         Provider<SettingsStore>.value(value: widget.settings),
         Provider<BackgroundRefreshScheduler>.value(value: _scheduler),
+        Provider<StartupStateSignal>.value(value: _startupSignal),
         ChangeNotifierProvider<NavigationState>.value(value: _navigation),
         ChangeNotifierProvider<ThemeController>.value(value: widget.themeController),
         ChangeNotifierProvider<DeviceSelection>.value(value: _devices),

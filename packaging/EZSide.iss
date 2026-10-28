@@ -98,6 +98,10 @@ FinishedHeadingLabel=EZSide is ready
 FinishedLabel=Connect your iPhone over USB, unlock it and tap Trust. Then sign in with your Apple ID and drop an .ipa onto the window.%n%nYou also need Apple Devices (or iTunes) installed for USB access.
 FinishedLabelNoIcons=Connect your iPhone over USB, unlock it and tap Trust. Then sign in with your Apple ID and drop an .ipa onto the window.
 ClickFinish=Click Finish to close Setup.
+; EZSide keeps running in the tray after its window is closed, so the stock "close all
+; instances" text points at a window the user cannot see. Same %1 and buttons as the stock text.
+SetupAppRunningError=Setup has detected that %1 is still running, possibly in the tray.%n%nRight-click the EZSide tray icon and choose Quit EZSide, then click OK to continue, or Cancel to exit.
+UninstallAppRunningError=Uninstall has detected that %1 is still running, possibly in the tray.%n%nRight-click the EZSide tray icon and choose Quit EZSide, then click OK to continue, or Cancel to exit.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
@@ -740,10 +744,35 @@ begin
     + ' trong ' + Folder + '?';
 end;
 
+// ── Uninstall: background integration ─────────────────────────────────────────────
+// The app can register itself outside the install folder: the "Start with Windows" Run
+// value (HKCU, off by default, written only by the app's own toggle) and the hourly
+// "EZSide Auto-Refresh" scheduled task. Setup creates neither, on purpose, and the
+// in-app updater's silent reinstall is an install, so this code runs on uninstall only. Left behind, the Run value launches a missing exe at
+// every logon and the task keeps firing a refresh against a deleted app.
+// Both removals are best effort and never prompt, so a silent uninstall is not held up
+// when the value or the task does not exist.
+procedure RemoveBackgroundIntegration;
+var
+  ResultCode: Integer;
+begin
+  RegDeleteValue(HKEY_CURRENT_USER, 'Software\Microsoft\Windows\CurrentVersion\Run', 'EZSide');
+  Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /F /TN "EZSide Auto-Refresh"', '',
+       SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   UserData: String;
 begin
+  // Early, before any file is removed, so a scheduled refresh cannot start again while the
+  // uninstall is running.
+  if CurUninstallStep = usUninstall then
+  begin
+    RemoveBackgroundIntegration;
+    Exit;
+  end;
+
   if CurUninstallStep <> usPostUninstall then
     Exit;
   if Length(UninstallAppDir) <= 3 then

@@ -4,8 +4,9 @@
 
 #include "flutter/generated_plugin_registrant.h"
 
-FlutterWindow::FlutterWindow(const flutter::DartProject& project)
-    : project_(project) {}
+FlutterWindow::FlutterWindow(const flutter::DartProject& project,
+                             bool start_hidden)
+    : project_(project), start_hidden_(start_hidden) {}
 
 FlutterWindow::~FlutterWindow() {
   // Release the controller through the pointer rather than letting the member
@@ -23,6 +24,7 @@ FlutterWindow::~FlutterWindow() {
   // the engine actually dies. Without this, every close faulted (0xC0000005 in
   // flutter_windows.dll) and Windows Error Reporting held the window on screen
   // for ~10 seconds before the process died as 0xC000041D.
+  tray_.reset();
   flutter_controller_.reset();
 }
 
@@ -42,10 +44,15 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
   RegisterPlugins(flutter_controller_->engine());
+  // Only the channel for now; the icon itself waits for Dart's "init".
+  tray_ = std::make_unique<TrayIcon>(flutter_controller_->engine()->messenger());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
-    this->Show();
+    // A --tray launch must not flash the window at sign-in.
+    if (!start_hidden_) {
+      this->Show();
+    }
   });
 
   // Flutter can complete the first frame before the "show window" callback is
@@ -57,6 +64,7 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  tray_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }

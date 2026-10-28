@@ -37,6 +37,7 @@ Refresh also works over Wi-Fi. Plug the phone in once while EZSide is open and E
 
 - Refresh can install only a new profile, without the IPA (as AltStore does). If that is not possible, EZSide re-signs the app instead.
 - Auto-refresh runs in the background every hour, over USB or Wi-Fi, and Wi-Fi sync is turned on automatically.
+- Closing the window keeps EZSide in the system tray; it can also start with Windows (Settings > Background).
 - If a refresh fails, EZSide shows a notice, at most once every 20 hours.
 - Apple sessions, pairing records and the signing certificate are protected with Windows DPAPI, so another Windows user or another PC cannot read them.
 - You choose the install folder, and the data folder sits beside the program.

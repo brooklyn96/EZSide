@@ -1,5 +1,6 @@
 #include <flutter/dart_project.h>
 #include <flutter/flutter_view_controller.h>
+#include <string.h>
 #include <windows.h>
 
 #include "flutter_window.h"
@@ -22,9 +23,18 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   std::vector<std::string> command_line_arguments =
       GetCommandLineArguments();
 
+  // The Run-key launch at sign-in (StartupRegistration.trayArg in Dart) starts
+  // in the tray with no window.
+  bool start_hidden = false;
+  for (const std::string& argument : command_line_arguments) {
+    if (_stricmp(argument.c_str(), "--tray") == 0) {
+      start_hidden = true;
+    }
+  }
+
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
 
-  FlutterWindow window(project);
+  FlutterWindow window(project, start_hidden);
   Win32Window::Point origin(10, 10);
   // Matches Sizes.windowWidth/windowHeight; window_manager re-centres and
   // applies the minimum size once Dart is up.

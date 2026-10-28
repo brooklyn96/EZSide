@@ -8,6 +8,7 @@ import 'package:ipaside/engine/engine_client.dart';
 import 'package:ipaside/engine/engine_exception.dart';
 import 'package:ipaside/platform/app_paths.dart';
 import 'package:ipaside/platform/background_refresh_scheduler.dart';
+import 'package:ipaside/platform/startup_registration.dart';
 import 'package:ipaside/services/file_picker.dart';
 import 'package:ipaside/services/settings_store.dart';
 import 'package:ipaside/ui/shell/app_dialogs.dart';
@@ -115,6 +116,43 @@ class _FakeScheduler implements BackgroundRefreshScheduler {
   }
 }
 
+/// A Run key stand-in, so no test ever touches the real registry.
+class _FakeRunKey implements RunKeyStore {
+  final Map<String, String> values = <String, String>{};
+  int deletes = 0;
+
+  /// Thrown by [write] and [delete] when set.
+  Object? writeFailure;
+
+  /// Thrown by [read] when set.
+  Object? readFailure;
+
+  @override
+  String? read(String name) {
+    final Object? failure = readFailure;
+    if (failure != null) throw failure;
+    return values[name];
+  }
+
+  @override
+  void write(String name, String data) {
+    final Object? failure = writeFailure;
+    if (failure != null) throw failure;
+    values[name] = data;
+  }
+
+  @override
+  void delete(String name) {
+    final Object? failure = writeFailure;
+    if (failure != null) throw failure;
+    deletes++;
+    values.remove(name);
+  }
+}
+
+const String _exe = r'C:\EZSide\app\EZSide.exe';
+const String _runCommand = '"$_exe" --tray';
+
 /// A picker stand-in: hands back whatever the test says the shell would.
 class _FakePicker implements FilePickerService {
   /// What [pickSignedFolder] returns; null is a cancelled dialog.
@@ -210,6 +248,7 @@ EngineResult _signedListing({
 void main() {
   late _FakeRunner runner;
   late _FakeScheduler scheduler;
+  late _FakeRunKey runKey;
   late NavigationState navigation;
   late _FakePicker picker;
   late _FakeDialogs dialogs;
@@ -221,6 +260,7 @@ void main() {
   setUp(() {
     runner = _FakeRunner();
     scheduler = _FakeScheduler();
+    runKey = _FakeRunKey();
     navigation = NavigationState()..navigateTo(NavKey.settings);
     picker = _FakePicker();
     dialogs = _FakeDialogs();
@@ -248,6 +288,7 @@ void main() {
       picker: picker,
       dialogs: dialogs,
       devices: devices!,
+      startup: StartupRegistration(exePath: _exe, store: runKey),
     );
     viewModel = model;
     await _settle();
@@ -373,6 +414,155 @@ void main() {
 
       expect(scheduler.setCalls, isEmpty);
       expect(model.hasAutoRefreshMessage, isFalse);
+    });
+  });
+
+  group('SettingsViewModel start with Windows', () {
+    test('is off by default and writes nothing on load', () async {
+      final SettingsViewModel model = await load();
+
+      expect(model.startupSupported, isTrue);
+      expect(model.startupEnabled, isFalse);
+      expect(model.hasStartupMessage, isFalse);
+      expect(runKey.values, isEmpty);
+    });
+
+    test('reflects an existing entry for this exe on load', () async {
+      runKey.values[StartupRegistration.valueName] = _runCommand;
+
+      final SettingsViewModel model = await load();
+
+      expect(model.startupEnabled, isTrue);
+    });
+
+    test('an entry for another exe shows as off', () async {
+      runKey.values[StartupRegistration.valueName] =
+          r'"D:\Old\EZSide.exe" --tray';
+
+      final SettingsViewModel model = await load();
+
+      expect(model.startupEnabled, isFalse);
+    });
+
+    test('leaves the toggle off when the Run key cannot be read', () async {
+      runKey.readFailure = StartupRegistrationException('denied');
+
+      final SettingsViewModel model = await load();
+
+      expect(model.startupEnabled, isFalse);
+      expect(model.hasStartupMessage, isFalse);
+    });
+
+    test('turning on writes the tray command', () async {
+      final SettingsViewModel model = await load();
+
+      await model.setStartupEnabled(true);
+
+      expect(runKey.values[StartupRegistration.valueName], _runCommand);
+      expect(model.startupEnabled, isTrue);
+      expect(
+        model.startupMessage,
+        'On \u2014 starts in the tray when you sign in.',
+      );
+      expect(model.isStartupMessageError, isFalse);
+      expect(model.startupBusy, isFalse);
+    });
+
+    test('turning off removes the entry', () async {
+      runKey.values[StartupRegistration.valueName] = _runCommand;
+      final SettingsViewModel model = await load();
+
+      await model.setStartupEnabled(false);
+
+      expect(runKey.deletes, 1);
+      expect(runKey.values, isEmpty);
+      expect(model.startupEnabled, isFalse);
+      expect(model.startupMessage, 'Off.');
+      expect(model.isStartupMessageError, isFalse);
+    });
+
+    test('a refused change rolls the toggle back and reports why', () async {
+      runKey.writeFailure = StartupRegistrationException(
+        "Couldn't write the Windows startup entry (error 5).",
+      );
+      final SettingsViewModel model = await load();
+
+      await model.setStartupEnabled(true);
+
+      expect(model.startupEnabled, isFalse);
+      expect(
+        model.startupMessage,
+        "Couldn't write the Windows startup entry (error 5).",
+      );
+      expect(model.isStartupMessageError, isTrue);
+      expect(model.startupBusy, isFalse);
+    });
+
+    test('a refused disable rolls the toggle back on', () async {
+      runKey.values[StartupRegistration.valueName] = _runCommand;
+      runKey.writeFailure = StartupRegistrationException('denied');
+      final SettingsViewModel model = await load();
+
+      await model.setStartupEnabled(false);
+
+      expect(model.startupEnabled, isTrue);
+      expect(model.isStartupMessageError, isTrue);
+      expect(runKey.values[StartupRegistration.valueName], _runCommand);
+    });
+
+    test('turning on when already on does nothing', () async {
+      runKey.values[StartupRegistration.valueName] = _runCommand;
+      final SettingsViewModel model = await load();
+
+      await model.setStartupEnabled(true);
+
+      expect(model.hasStartupMessage, isFalse);
+      expect(runKey.deletes, 0);
+    });
+
+    test('turning off when already off still deletes', () async {
+      final SettingsViewModel model = await load();
+
+      await model.setStartupEnabled(false);
+
+      expect(runKey.deletes, 1);
+      expect(model.startupEnabled, isFalse);
+      expect(model.startupMessage, 'Off.');
+    });
+
+    test('turning off removes an entry for another exe', () async {
+      runKey.values[StartupRegistration.valueName] =
+          r'"D:\Old\EZSide.exe" --tray';
+      final SettingsViewModel model = await load();
+      expect(model.startupEnabled, isFalse);
+
+      await model.setStartupEnabled(false);
+
+      expect(runKey.values, isEmpty);
+      expect(model.startupEnabled, isFalse);
+    });
+
+    test('a refused delete while off stays off', () async {
+      runKey.writeFailure = StartupRegistrationException('denied');
+      final SettingsViewModel model = await load();
+
+      await model.setStartupEnabled(false);
+
+      expect(model.startupEnabled, isFalse);
+      expect(model.isStartupMessageError, isTrue);
+    });
+
+    test('refreshStartup re-reads a change made elsewhere', () async {
+      final SettingsViewModel model = await load();
+      expect(model.startupEnabled, isFalse);
+
+      runKey.values[StartupRegistration.valueName] = _runCommand;
+      await model.refreshStartup();
+      expect(model.startupEnabled, isTrue);
+
+      runKey.values.clear();
+      await model.refreshStartup();
+      expect(model.startupEnabled, isFalse);
     });
   });
 
@@ -639,6 +829,7 @@ void main() {
         picker: picker,
         dialogs: dialogs,
         devices: devices!,
+        startup: StartupRegistration(exePath: _exe, store: runKey),
       );
       viewModel = model;
 

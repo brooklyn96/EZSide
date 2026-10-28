@@ -96,6 +96,7 @@ void main() {
       final _FakeRunner runner = _FakeRunner();
 
       final int code = await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(),
         transport: runner,
@@ -116,6 +117,7 @@ void main() {
       final _FakeRunner runner = _FakeRunner();
 
       await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(connection: 'wifi'),
         transport: runner,
@@ -132,6 +134,7 @@ void main() {
       final _FakeRunner runner = _FakeRunner();
 
       await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(
           signedIpa: const SignedIpaSettings(keep: true),
@@ -150,6 +153,7 @@ void main() {
       final _FakeRunner runner = _FakeRunner();
 
       await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(
           signedIpa: const SignedIpaSettings(
@@ -174,6 +178,7 @@ void main() {
       final _FakeSettings settings = _FakeSettings();
 
       await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: settings,
         transport: _FakeRunner(),
@@ -201,6 +206,7 @@ void main() {
       );
 
       final int code = await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(),
         transport: runner,
@@ -223,6 +229,7 @@ void main() {
         () async {
       // Engine exit code 2: the serve frame is ok:false but carries the list.
       final int code = await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(),
         transport: _FakeRunner(
@@ -255,6 +262,7 @@ void main() {
 
     test('a thrown run shows one notice and exits 1', () async {
       final int code = await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(),
         transport: _FakeRunner(outcome: EngineException('engine down')),
@@ -268,6 +276,7 @@ void main() {
 
     test('all apps succeeding shows nothing', () async {
       final int code = await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(),
         transport: _FakeRunner(
@@ -289,6 +298,7 @@ void main() {
 
     test('nothing due shows nothing', () async {
       final int code = await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(),
         transport: _FakeRunner(),
@@ -301,6 +311,7 @@ void main() {
 
     test('a notice that throws does not change the exit code', () async {
       final int code = await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(),
         transport: _FakeRunner(outcome: EngineException('engine down')),
@@ -331,6 +342,7 @@ void main() {
     test('ok and deferred only: exit 0, no notice, logged as waiting',
         () async {
       final int code = await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(),
         transport: _FakeRunner(outcome: summaryOf(<String>['ok', 'deferred'])),
@@ -350,6 +362,7 @@ void main() {
     test('a deferred app next to a failed one counts only the failure',
         () async {
       final int code = await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(),
         transport:
@@ -366,6 +379,7 @@ void main() {
     final DateTime t0 = DateTime.utc(2026, 10, 28, 8);
 
     Future<int> failingRun(DateTime at) => AutoRefreshRunner.run(
+          guiRunning: () => false,
           paths: paths,
           settings: _FakeSettings(),
           transport: _FakeRunner(outcome: summaryOf(<String>['error'])),
@@ -451,6 +465,7 @@ void main() {
       bool stampedAtNotice = false;
 
       await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(),
         transport: _FakeRunner(outcome: summaryOf(<String>['error'])),
@@ -467,6 +482,7 @@ void main() {
     test('a notice that throws still leaves the stamp and exit code 1',
         () async {
       final int code = await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(),
         transport: _FakeRunner(outcome: summaryOf(<String>['error'])),
@@ -483,6 +499,7 @@ void main() {
       // First run: the box is left open and the process is killed - modelled by
       // a notice that throws after the stamp was written.
       await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(),
         transport: _FakeRunner(outcome: summaryOf(<String>['error'])),
@@ -497,6 +514,7 @@ void main() {
 
     test('a thrown run is rate limited the same way', () async {
       Future<int> thrown(DateTime at) => AutoRefreshRunner.run(
+            guiRunning: () => false,
             paths: paths,
             settings: _FakeSettings(),
             transport: _FakeRunner(outcome: EngineException('engine down')),
@@ -514,6 +532,7 @@ void main() {
   group('AutoRefreshRunner logging', () {
     test('records that there was nothing to do', () async {
       await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(),
         transport: _FakeRunner(),
@@ -541,6 +560,7 @@ void main() {
       );
 
       final int code = await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(),
         transport: runner,
@@ -559,6 +579,7 @@ void main() {
       );
 
       final int code = await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(),
         transport: runner,
@@ -575,6 +596,7 @@ void main() {
       );
 
       await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: nested,
         settings: _FakeSettings(),
         transport: _FakeRunner(),
@@ -590,6 +612,7 @@ void main() {
       );
 
       await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(),
         transport: _FakeRunner(),
@@ -609,6 +632,7 @@ void main() {
       File(paths.autoRefreshLogPath).writeAsStringSync('old 0\nold 1\n');
 
       await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(),
         transport: _FakeRunner(),
@@ -630,6 +654,7 @@ void main() {
       Directory('${paths.autoRefreshLogPath}.tmp').createSync();
 
       final int code = await AutoRefreshRunner.run(
+        guiRunning: () => false,
         paths: paths,
         settings: _FakeSettings(),
         transport: _FakeRunner(),
@@ -641,6 +666,92 @@ void main() {
           File(paths.autoRefreshLogPath).readAsLinesSync();
       expect(lines, hasLength(2501));
       expect(lines.last, contains('nothing to refresh'));
+    });
+  });
+
+  group('AutoRefreshRunner.claimNotice', () {
+    final DateTime t0 = DateTime.utc(2026, 10, 28, 8);
+    File stamp() => File(paths.autoRefreshNoticeStampPath);
+
+    test('the first claim succeeds and writes the stamp', () {
+      expect(AutoRefreshRunner.claimNotice(paths: paths, now: t0), isTrue);
+      expect(DateTime.parse(stamp().readAsStringSync()), t0);
+    });
+
+    test('a second claim within 20 hours is refused and keeps the stamp', () {
+      AutoRefreshRunner.claimNotice(paths: paths, now: t0);
+
+      expect(
+        AutoRefreshRunner.claimNotice(
+          paths: paths,
+          now: t0.add(const Duration(hours: 19, minutes: 59)),
+        ),
+        isFalse,
+      );
+      expect(DateTime.parse(stamp().readAsStringSync()), t0);
+    });
+
+    test('after 20 hours the claim succeeds and moves the stamp', () {
+      AutoRefreshRunner.claimNotice(paths: paths, now: t0);
+      final DateTime later = t0.add(const Duration(hours: 20));
+
+      expect(AutoRefreshRunner.claimNotice(paths: paths, now: later), isTrue);
+      expect(DateTime.parse(stamp().readAsStringSync()), later);
+    });
+
+    test('a garbled stamp or one in the future does not block a claim', () {
+      stamp().writeAsStringSync('not a time');
+      expect(AutoRefreshRunner.claimNotice(paths: paths, now: t0), isTrue);
+
+      stamp().writeAsStringSync(
+        t0.add(const Duration(days: 3)).toIso8601String(),
+      );
+      expect(AutoRefreshRunner.claimNotice(paths: paths, now: t0), isTrue);
+    });
+
+    test('an unwritable stamp still allows the claim and never throws', () {
+      Directory(paths.autoRefreshNoticeStampPath).createSync();
+
+      expect(AutoRefreshRunner.claimNotice(paths: paths, now: t0), isTrue);
+    });
+  });
+
+  group('AutoRefreshRunner with the GUI open', () {
+    final DateTime t0 = DateTime.utc(2026, 10, 28, 8);
+
+    Future<int> failingRun({required bool gui}) => AutoRefreshRunner.run(
+          paths: paths,
+          settings: _FakeSettings(),
+          transport: _FakeRunner(outcome: EngineException('engine down')),
+          notice: notice,
+          now: () => t0,
+          guiRunning: () => gui,
+        );
+
+    test('a failure shows no box and leaves no stamp, but is logged', () async {
+      final int code = await failingRun(gui: true);
+
+      expect(code, 1);
+      expect(notices, isEmpty);
+      expect(File(paths.autoRefreshNoticeStampPath).existsSync(), isFalse);
+      expect(log(), contains('engine down'));
+    });
+
+    test('the stamp stays free for the GUI to claim', () async {
+      await failingRun(gui: true);
+
+      expect(AutoRefreshRunner.claimNotice(paths: paths, now: t0), isTrue);
+    });
+
+    test('without the GUI the box and the stamp are as before', () async {
+      final int code = await failingRun(gui: false);
+
+      expect(code, 1);
+      expect(notices, hasLength(1));
+      expect(
+        DateTime.parse(File(paths.autoRefreshNoticeStampPath).readAsStringSync()),
+        t0,
+      );
     });
   });
 }

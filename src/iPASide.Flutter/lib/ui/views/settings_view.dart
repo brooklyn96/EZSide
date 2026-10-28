@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../engine/engine.dart';
 import '../../platform/background_refresh_scheduler.dart';
+import '../../platform/tray_service.dart';
 import '../../services/file_picker.dart';
 import '../../services/settings_store.dart';
 import '../../viewmodels/account_selection.dart';
@@ -19,8 +20,8 @@ import '../widgets/progress.dart';
 import '../widgets/settings_layout.dart';
 import '../widgets/smooth_scroll.dart';
 
-/// Settings: appearance, device, pairing file, auto-refresh, signed IPAs,
-/// account, anisette, updates and about.
+/// Settings: appearance, device, pairing file, auto-refresh, background,
+/// signed IPAs, account, anisette, updates and about.
 ///
 /// One column of full-width grouped sections rather than a grid of cards. The
 /// sections carry wildly different amounts of content — three lines of prose and
@@ -33,15 +34,20 @@ class SettingsView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ChangeNotifierProvider(
-        create: (ctx) => SettingsViewModel(
-          engine: ctx.read<EngineApi>(),
-          navigation: ctx.read<NavigationState>(),
-          scheduler: ctx.read<BackgroundRefreshScheduler>(),
-          settings: ctx.read<SettingsStore>(),
-          picker: ctx.read<FilePickerService>(),
-          dialogs: ctx.read<DialogService>(),
-          devices: ctx.read<DeviceSelection>(),
-        ),
+        create: (ctx) {
+          final SettingsViewModel model = SettingsViewModel(
+            engine: ctx.read<EngineApi>(),
+            navigation: ctx.read<NavigationState>(),
+            scheduler: ctx.read<BackgroundRefreshScheduler>(),
+            settings: ctx.read<SettingsStore>(),
+            picker: ctx.read<FilePickerService>(),
+            dialogs: ctx.read<DialogService>(),
+            devices: ctx.read<DeviceSelection>(),
+          );
+          // The tray can change "Start with Windows" while this page is open.
+          ctx.read<StartupStateSignal>().listen(model.refreshStartup);
+          return model;
+        },
         child: const _SettingsBody(),
       );
 }
@@ -60,6 +66,7 @@ class _SettingsBody extends StatelessWidget {
       const _DeviceSection(),
       _PairingSection(vm: vm),
       if (vm.autoRefreshSupported) _AutoRefreshSection(vm: vm),
+      if (vm.startupSupported) _BackgroundSection(vm: vm),
       _SignedIpaSection(vm: vm),
       _AccountSection(vm: vm),
       _AnisetteSection(vm: vm),
@@ -286,6 +293,39 @@ class _AutoRefreshSection extends StatelessWidget {
                 ? SettingsStatusLine(
                     text: vm.autoRefreshMessage,
                     isError: vm.isAutoRefreshMessageError,
+                  )
+                : null,
+          ),
+        ],
+      );
+}
+
+/// Background: whether EZSide starts hidden in the tray at sign-in.
+class _BackgroundSection extends StatelessWidget {
+  const _BackgroundSection({required this.vm});
+
+  final SettingsViewModel vm;
+
+  @override
+  Widget build(BuildContext context) => SettingsSection(
+        label: 'BACKGROUND',
+        children: [
+          SettingsRow(
+            title: 'Start EZSide with Windows (in the tray)',
+            description:
+                'EZSide starts hidden in the tray when you sign in, so it can '
+                'remember your iPhone when you plug it in. Closing the window '
+                'keeps it in the tray either way; use Quit EZSide in the tray '
+                'menu to stop it.',
+            control: AppToggle(
+              value: vm.startupEnabled,
+              onChanged: vm.startupBusy ? null : vm.setStartupEnabled,
+              semanticsLabel: 'Start EZSide with Windows (in the tray)',
+            ),
+            detail: vm.hasStartupMessage
+                ? SettingsStatusLine(
+                    text: vm.startupMessage,
+                    isError: vm.isStartupMessageError,
                   )
                 : null,
           ),
