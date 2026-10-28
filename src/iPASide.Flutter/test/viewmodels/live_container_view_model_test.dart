@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:collection';
 
 import 'package:flutter/widgets.dart';
@@ -24,6 +25,10 @@ class _FakeRunner with EngineCommandRunner {
   /// Progress lines to emit, keyed by command, before its result.
   final Map<String, List<String>> progress = <String, List<String>>{};
 
+  /// Parks the sign-in probe until completed, so a test can move the selection
+  /// while a setup is past its click but not yet at the engine.
+  Completer<void>? loginHold;
+
   void always(String command, Object outcome) => _defaults[command] = outcome;
 
   void next(String command, Object outcome) =>
@@ -38,6 +43,7 @@ class _FakeRunner with EngineCommandRunner {
     calls.add(args);
 
     final String command = args.first;
+    if (command == 'login') await loginHold?.future;
     if (onProgress != null) {
       for (final String line in progress[command] ?? const <String>[]) {
         onProgress(line);
@@ -127,6 +133,40 @@ Future<DeviceSelection> _device(String udid) async {
   return selection;
 }
 
+/// Two phones with BBBB2222 selected, over their own transport; every listing
+/// after the first holds only [later].
+Future<DeviceSelection> _bSelected({
+  List<String> later = const <String>['AAAA1111', 'BBBB2222'],
+}) async {
+  final _FakeRunner runner = _FakeRunner()
+    ..next(
+      'devices',
+      _ok(<dynamic>[
+        <String, dynamic>{'serial': 'AAAA1111', 'connection_type': 'USB'},
+        <String, dynamic>{'serial': 'BBBB2222', 'connection_type': 'Network'},
+      ]),
+    )
+    ..always(
+      'devices',
+      _ok(<dynamic>[
+        for (final String udid in later)
+          <String, dynamic>{'serial': udid, 'connection_type': 'USB'},
+      ]),
+    );
+  final DeviceSelection selection = DeviceSelection(
+    engine: EngineApi(runner),
+    settings: _FakeSettings(),
+  );
+  addTearDown(selection.dispose);
+  await selection.refresh();
+  selection.select('BBBB2222');
+  return selection;
+}
+
+/// Whether any call carried [flag], i.e. reached the phone with that action.
+bool _wrote(_FakeRunner runner, String flag) =>
+    runner.calls.any((List<String> c) => c.contains(flag));
+
 Map<String, dynamic> _status({
   bool installed = true,
   String? version = '3.8.0',
@@ -173,9 +213,13 @@ class _FakePicker implements FilePickerService {
 
   int pickCount = 0;
 
+  /// Runs while the prompt is "open", before it answers.
+  Future<void> Function()? whilePicking;
+
   @override
   Future<String?> pickIpa() async {
     pickCount++;
+    await whilePicking?.call();
     return ipa;
   }
 
@@ -202,6 +246,9 @@ class _FakeDialogs extends DialogService {
 
   final List<String> confirms = <String>[];
 
+  /// Runs while the dialog is "open", before it answers.
+  Future<void> Function()? whileConfirming;
+
   @override
   Future<bool> confirm({
     required String title,
@@ -211,6 +258,7 @@ class _FakeDialogs extends DialogService {
     bool danger = false,
   }) async {
     confirms.add(title);
+    await whileConfirming?.call();
     return answer;
   }
 }
@@ -412,6 +460,47 @@ void main() {
         runner.calls.where((List<String> c) => c.contains('--setup')).length,
         1,
       );
+    });
+
+    test('sets up the phone clicked for, even if the selection moves during '
+        'sign-in', () async {
+      final DeviceSelection devices = await _bSelected();
+      final _FakeRunner runner = _FakeRunner()
+        ..always('login', _authenticated)
+        ..always('livecontainer', _ok(_setup()))
+        ..loginHold = Completer<void>();
+
+      final LiveContainerViewModel vm = _model(runner, devices: devices);
+      final Future<void> run = vm.setUp();
+      await pumpEventQueue();
+      devices.select('AAAA1111');
+      runner.loginHold!.complete();
+      await run;
+
+      final List<String> argv =
+          runner.calls.firstWhere((List<String> c) => c.contains('--setup'));
+      expect(argv[argv.indexOf('--udid') + 1], 'BBBB2222');
+    });
+
+    test('a phone that drops out during sign-in gets no setup, and neither '
+        'does any other', () async {
+      final DeviceSelection devices =
+          await _bSelected(later: const <String>['AAAA1111']);
+      final _FakeRunner runner = _FakeRunner()
+        ..always('login', _authenticated)
+        ..always('livecontainer', _ok(_setup()))
+        ..loginHold = Completer<void>();
+
+      final LiveContainerViewModel vm = _model(runner, devices: devices);
+      final Future<void> run = vm.setUp();
+      await pumpEventQueue();
+      await devices.refresh();
+      runner.loginHold!.complete();
+      await run;
+
+      expect(_wrote(runner, '--setup'), isFalse);
+      expect(vm.failureMessage, DeviceSelection.targetGoneMessage);
+      expect(vm.isRunning, isFalse);
     });
 
     test('the status is re-read afterwards rather than inferred', () async {
@@ -644,6 +733,84 @@ void main() {
       expect(vm.guestNotice, isNull);
     });
 
+    test('adds to the phone clicked for, even if the selection moves while the '
+        'prompt is open', () async {
+      final _FakeRunner selectionRunner = _FakeRunner()
+        ..always(
+          'devices',
+          _ok(<dynamic>[
+            <String, dynamic>{'serial': 'AAAA1111', 'connection_type': 'USB'},
+            <String, dynamic>{'serial': 'BBBB2222', 'connection_type': 'USB'},
+          ]),
+        );
+      final DeviceSelection devices = DeviceSelection(
+        engine: EngineApi(selectionRunner),
+        settings: _FakeSettings(),
+      );
+      addTearDown(devices.dispose);
+      await devices.refresh();
+      devices.select('BBBB2222');
+      final _FakeRunner runner = _FakeRunner()
+        ..always('livecontainer', _ok(_status()));
+      final _FakePicker picker = _FakePicker(ipa: r'C:\ipas\Example.ipa')
+        ..whilePicking = () async {
+          devices.select('AAAA1111');
+        };
+
+      final LiveContainerViewModel vm =
+          _model(runner, devices: devices, picker: picker);
+      await vm.load();
+      await vm.addGuest();
+
+      final List<String> argv =
+          runner.calls.firstWhere((List<String> c) => c.contains('--add'));
+      expect(argv[argv.indexOf('--udid') + 1], 'BBBB2222');
+    });
+
+    test('a phone that drops out while the prompt is open gets nothing, and '
+        'neither does any other', () async {
+      final _FakeRunner selectionRunner = _FakeRunner()
+        ..next(
+          'devices',
+          _ok(<dynamic>[
+            <String, dynamic>{'serial': 'AAAA1111', 'connection_type': 'USB'},
+            <String, dynamic>{
+              'serial': 'BBBB2222',
+              'connection_type': 'Network',
+            },
+          ]),
+        )
+        ..always(
+          'devices',
+          _ok(<dynamic>[
+            <String, dynamic>{'serial': 'AAAA1111', 'connection_type': 'USB'},
+          ]),
+        );
+      final DeviceSelection devices = DeviceSelection(
+        engine: EngineApi(selectionRunner),
+        settings: _FakeSettings(),
+      );
+      addTearDown(devices.dispose);
+      await devices.refresh();
+      devices.select('BBBB2222');
+      final _FakeRunner runner = _FakeRunner()
+        ..always('livecontainer', _ok(_status()));
+      final _FakePicker picker = _FakePicker(ipa: r'C:\ipas\Example.ipa')
+        ..whilePicking = devices.refresh;
+
+      final LiveContainerViewModel vm =
+          _model(runner, devices: devices, picker: picker);
+      await vm.load();
+      await vm.addGuest();
+
+      expect(
+        runner.calls.any((List<String> c) => c.contains('--add')),
+        isFalse,
+      );
+      expect(vm.guestNotice, DeviceSelection.targetGoneMessage);
+      expect(vm.isAdding, isFalse);
+    });
+
     test('copy progress is surfaced as it arrives', () async {
       final _FakeRunner runner = _FakeRunner()
         ..always('livecontainer', _ok(_status()));
@@ -690,6 +857,42 @@ void main() {
         runner.calls.any((List<String> c) => c.contains('--remove')),
         isFalse,
       );
+    });
+
+    test('removes from the phone clicked for, even if the selection moves '
+        'while the dialog is open', () async {
+      final DeviceSelection devices = await _bSelected();
+      final _FakeRunner runner = _FakeRunner()
+        ..always('livecontainer', _ok(_status()));
+      final _FakeDialogs dialogs = _FakeDialogs()
+        ..whileConfirming = () async {
+          devices.select('AAAA1111');
+        };
+
+      final LiveContainerViewModel vm =
+          _model(runner, devices: devices, dialogs: dialogs);
+      await vm.removeGuest(const GuestApp(bundleId: 'com.example.app'));
+
+      final List<String> argv =
+          runner.calls.firstWhere((List<String> c) => c.contains('--remove'));
+      expect(argv[argv.indexOf('--udid') + 1], 'BBBB2222');
+    });
+
+    test('a phone that drops out while the dialog is open loses nothing, and '
+        'neither does any other', () async {
+      final DeviceSelection devices =
+          await _bSelected(later: const <String>['AAAA1111']);
+      final _FakeRunner runner = _FakeRunner()
+        ..always('livecontainer', _ok(_status()));
+      final _FakeDialogs dialogs = _FakeDialogs()
+        ..whileConfirming = devices.refresh;
+
+      final LiveContainerViewModel vm =
+          _model(runner, devices: devices, dialogs: dialogs);
+      await vm.removeGuest(const GuestApp(bundleId: 'com.example.app'));
+
+      expect(_wrote(runner, '--remove'), isFalse);
+      expect(vm.guestNotice, DeviceSelection.targetGoneMessage);
     });
 
     test('an app with no bundle id cannot be removed', () async {

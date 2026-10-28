@@ -312,6 +312,14 @@ class SideloadViewModel extends BaseViewModel {
     final path = _ipaPath;
     if (path == null || _inspection == null || isBlocked || _isRunning) return;
 
+    // The phone the user clicked Install for, read before the first await: the
+    // selection can move while the sign-in probe is out, and this run must not
+    // follow it to another phone. Before the first enumeration there is no
+    // selection yet, and that one is waited for below.
+    final String? clickedUdid = _devices.selectedUdid;
+    final bool loaded = _devices.hasLoaded;
+    final bool wasEmpty = _devices.isEmpty;
+
     // Claimed before the first await, not after the sign-in probe below: the
     // button is disabled while a run is on, but the guard has to hold on its own,
     // or two calls landing in the same frame would both get past it and install
@@ -336,11 +344,16 @@ class SideloadViewModel extends BaseViewModel {
         return;
       }
 
-      // Both of these are read here rather than held as fields: this model is
-      // app-scoped, so anything cached at construction would still be the value
-      // the app started with.
+      // Read here rather than held as a field: this model is app-scoped, so
+      // anything cached at construction would still be the value the app started
+      // with.
       final signed = _settings.loadSignedIpa();
-      final udid = await _devices.targetUdid();
+      final udid = loaded ? clickedUdid : await _devices.targetUdid();
+      if (_devices.isTargetGone(udid, wasEmpty: wasEmpty)) {
+        _failureMessage = DeviceSelection.targetGoneMessage;
+        _isFailed = true;
+        return;
+      }
 
       final options = SideloadOptions(
         udid: udid,

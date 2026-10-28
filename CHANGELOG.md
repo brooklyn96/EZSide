@@ -6,6 +6,42 @@ All notable changes to iPASide are documented here. This project adheres to
 
 ## [Unreleased]
 
+### Added
+
+- **Wi-Fi direct: a phone plugged in once is reached over the LAN even when Windows does not list
+  it.** On networks that filter multicast, Apple Mobile Device Service never shows a Wi-Fi iPhone,
+  so refresh and install failed once the cable was out. The engine now remembers every phone it
+  sees paired over USB (UDID and Wi-Fi MAC, in `wifi-devices.json` under the data folder, no
+  secrets). When usbmux cannot reach a remembered phone, `lockdown.create` finds it by a unicast
+  DNS-SD query to its last address, then by one sweep of the /24 of this PC's primary route (only
+  a private 10/8, 172.16/12 or 192.168/16 address; never a VPN, Tailscale or public network),
+  matching the MAC the phone advertises, and opens lockdown over TCP with the pair record this PC
+  already holds. It never pairs over Wi-Fi: a forced USB connection and `pairing --create` never
+  fall back. `devices` and the live device list in the app show such a phone as `Network`.
+  Updates to the file are locked across processes and skipped when nothing changed.
+  - Only the paired phone is talked to: only an answer to the query from a host that was asked
+    counts; iOS older than 11 is refused before any pair-record data is sent; the session and every
+    service connection must be TLS with the phone's own certificate from the pair record (only the
+    heartbeat may be plaintext), and the phone must report the UDID asked for.
+  - A silent phone never hangs a refresh or install: every connection step is bounded (10 s), the
+    lockdown heartbeat is watched (no Marco within twice its interval plus 5 s, interval capped at
+    30 s, closes everything), a read with no data for 60 s closes the connection, and an operation
+    over Wi-Fi is cut off after 2 minutes (30 minutes for an install). A dropped connection is never
+    re-opened behind the caller's back.
+  - A connection that drops is retried once, from the start, on a new connection to the same phone
+    once it answers again (within 75 s); the target is fixed before the first attempt, so the retry
+    never lands on another phone. Refusals and install errors are never retried; USB operations
+    are unchanged. During an install the AFC upload connection is closed before installd runs, so a
+    long install phase is not mistaken for a silent phone.
+  - A remembered phone stays in the device list for 3 minutes after its last answer, so an idle
+    phone that goes quiet for a minute does not flicker out; a phone unplugged from USB leaves at
+    once as before.
+  - The app fixes the target phone the moment an action starts (install, LiveContainer setup, add
+    or remove, uninstall, library removal, pairing import); if that phone is gone by the time the
+    engine is called, the action fails with "iPhone đã chọn không còn kết nối" instead of reaching
+    another phone.
+  - The pymobiledevice3 minimum is unchanged; an older one only loses Wi-Fi direct.
+
 ## [1.1.0] - 2026-10-28
 
 ### Changed

@@ -261,7 +261,10 @@ def _remote_pair_keys(udid: str, serial: str | None = None) -> dict[str, Any]:
     from ._asyncutil import run
 
     async def _pair() -> dict[str, Any]:
-        client = await lockdown_mod.create(serial or udid, prefer_usb=True)
+        # usbmux only: Remote Pairing pairs, and pairing never runs over Wi-Fi direct.
+        client = await lockdown_mod.create(
+            serial or udid, prefer_usb=True, allow_wifi_direct=False
+        )
         service = None
         try:
             service = await RemotePairingLockdownService.create(client)

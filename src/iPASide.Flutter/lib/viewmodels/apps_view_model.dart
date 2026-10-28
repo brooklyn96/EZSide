@@ -111,6 +111,11 @@ class AppsViewModel extends BaseViewModel {
   Future<void> uninstallRow(AppRow row) async {
     if (row.isRemoving) return;
 
+    // The phone whose list the user acted on, read before the dialog: the
+    // selection can move while it is open, and the uninstall must not follow it.
+    final String? udid = _shownUdid;
+    final bool wasEmpty = _devices.isEmpty;
+
     final bool confirmed = await _dialogs.confirm(
       title: 'Uninstall app',
       message: 'Uninstall ${row.name} from your iPhone?',
@@ -120,13 +125,21 @@ class AppsViewModel extends BaseViewModel {
     );
     if (!confirmed) return;
 
+    if (_devices.isTargetGone(udid, wasEmpty: wasEmpty)) {
+      await _dialogs.alert(
+        title: "Couldn't uninstall",
+        message: DeviceSelection.targetGoneMessage,
+      );
+      return;
+    }
+
     row._isRemoving = true;
     notify();
 
     try {
       await _engine.uninstall(
         row.bundleId,
-        udid: await _devices.targetUdid(),
+        udid: udid,
         connection: _devices.connectionArg,
       );
     } catch (error) {

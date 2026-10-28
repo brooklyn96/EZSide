@@ -172,6 +172,12 @@ class LiveContainerViewModel extends BaseViewModel {
   Future<void> addGuest() async {
     if (isGuestBusy || !isInstalled) return;
 
+    // The phone the user clicked Add for, read before the picker: the selection
+    // can move while the dialog is open, and the install must not follow it.
+    final String? clickedUdid = _devices.selectedUdid;
+    final bool loaded = _devices.hasLoaded;
+    final bool wasEmpty = _devices.isEmpty;
+
     final String? path = await _picker.pickIpa();
     if (path == null) return;
 
@@ -181,9 +187,14 @@ class LiveContainerViewModel extends BaseViewModel {
     notify();
 
     try {
+      final String? udid = loaded ? clickedUdid : await _devices.targetUdid();
+      if (_devices.isTargetGone(udid, wasEmpty: wasEmpty)) {
+        _guestNotice = DeviceSelection.targetGoneMessage;
+        return;
+      }
       final GuestAppInstall result = await _engine.installGuestApp(
         path,
-        udid: await _devices.targetUdid(),
+        udid: udid,
         connection: _devices.connectionArg,
         onProgress: (SideloadProgress progress) {
           final String? step = progress.step;
@@ -211,6 +222,12 @@ class LiveContainerViewModel extends BaseViewModel {
     final String? bundleId = guest.bundleId;
     if (bundleId == null || isGuestBusy) return;
 
+    // The phone the user clicked Remove for, read before the dialog: the
+    // selection can move while it is open, and the removal must not follow it.
+    final String? clickedUdid = _devices.selectedUdid;
+    final bool loaded = _devices.hasLoaded;
+    final bool wasEmpty = _devices.isEmpty;
+
     final bool confirmed = await _dialogs.confirm(
       title: 'Remove from LiveContainer?',
       message: '$bundleId will be deleted from inside LiveContainer, along with '
@@ -226,9 +243,14 @@ class LiveContainerViewModel extends BaseViewModel {
     notify();
 
     try {
+      final String? udid = loaded ? clickedUdid : await _devices.targetUdid();
+      if (_devices.isTargetGone(udid, wasEmpty: wasEmpty)) {
+        _guestNotice = DeviceSelection.targetGoneMessage;
+        return;
+      }
       await _engine.removeGuestApp(
         bundleId,
-        udid: await _devices.targetUdid(),
+        udid: udid,
         connection: _devices.connectionArg,
       );
       _guestNotice = 'Removed $bundleId.';
@@ -249,6 +271,13 @@ class LiveContainerViewModel extends BaseViewModel {
   /// after the download needs Apple: there is no point downloading 4 MB to fail.
   Future<void> setUp() async {
     if (_isRunning) return;
+
+    // The phone the user clicked Set up for, read before the first await: the
+    // selection can move while the sign-in probe is out, and the install must not
+    // follow it.
+    final String? clickedUdid = _devices.selectedUdid;
+    final bool loaded = _devices.hasLoaded;
+    final bool wasEmpty = _devices.isEmpty;
 
     // Claimed before the first await, not after the sign-in probe: the button is
     // disabled while a run is on, but the guard has to hold on its own, or two
@@ -273,8 +302,13 @@ class LiveContainerViewModel extends BaseViewModel {
       }
 
       final SignedIpaSettings signed = _settings.loadSignedIpa();
+      final String? udid = loaded ? clickedUdid : await _devices.targetUdid();
+      if (_devices.isTargetGone(udid, wasEmpty: wasEmpty)) {
+        _failureMessage = DeviceSelection.targetGoneMessage;
+        return;
+      }
       _result = await _engine.liveContainerSetup(
-        udid: await _devices.targetUdid(),
+        udid: udid,
         connection: _devices.connectionArg,
         keepSigned: signed.keep,
         signedDirectory: signed.directory,

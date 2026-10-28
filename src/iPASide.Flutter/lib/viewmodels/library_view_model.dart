@@ -294,6 +294,14 @@ class LibraryViewModel extends BaseViewModel {
   Future<void> removeRow(LibraryRow row) async {
     if (row.isBusy) return;
 
+    // A record predating the device field falls back to the phone selected when
+    // the user clicked Remove, read before the dialog: the selection can move
+    // while it is open or while forget runs, and the uninstall must not follow.
+    final String? recordedUdid = row.udid;
+    final String? clickedUdid = _devices.selectedUdid;
+    final bool loaded = _devices.hasLoaded;
+    final bool wasEmpty = _devices.isEmpty;
+
     final bool confirmed = await _dialogs.confirm(
       title: 'Remove from library',
       message: 'This removes the app from your library and uninstalls it from '
@@ -318,19 +326,29 @@ class LibraryViewModel extends BaseViewModel {
         if (BaseViewModel.isShutdown(error)) return;
       }
 
-      try {
-        // The phone the app actually went to, which the registry records, not
-        // whichever one happens to be selected now. Retargeting to a second
-        // device and then removing a row must not uninstall from that device.
-        // A record predating the field falls back to the current target.
-        await _engine.uninstall(
-          row.bundleId,
-          udid: row.udid ?? await _devices.targetUdid(),
-          connection: _devices.connectionArg,
+      // The phone the app actually went to, which the registry records, not
+      // whichever one happens to be selected now. Retargeting to a second
+      // device and then removing a row must not uninstall from that device.
+      // The engine is told that exact phone, so only the fallback is checked.
+      final String? udid = recordedUdid ??
+          (loaded ? clickedUdid : await _devices.targetUdid());
+      if (recordedUdid == null &&
+          _devices.isTargetGone(udid, wasEmpty: wasEmpty)) {
+        await _dialogs.alert(
+          title: "Couldn't uninstall",
+          message: DeviceSelection.targetGoneMessage,
         );
-      } catch (error) {
-        // The device may be offline; the uninstall is best-effort as well.
-        if (BaseViewModel.isShutdown(error)) return;
+      } else {
+        try {
+          await _engine.uninstall(
+            row.bundleId,
+            udid: udid,
+            connection: _devices.connectionArg,
+          );
+        } catch (error) {
+          // The device may be offline; the uninstall is best-effort as well.
+          if (BaseViewModel.isShutdown(error)) return;
+        }
       }
 
       await _load();

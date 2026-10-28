@@ -453,6 +453,10 @@ def _livecontainer_host(args: argparse.Namespace) -> str:
 
 def _cmd_livecontainer(args: argparse.Namespace) -> int:
     """Report on LiveContainer, set it up, or manage the apps running inside it."""
+    if args.add or args.remove or args.apps or not (args.download or args.setup):
+        # One target for every phone call below (status, then the guest call): without
+        # --udid each would pick from the inventory on its own, possibly another phone.
+        args.udid = device.resolve_serial(args.udid)
     if args.add:
         host = _livecontainer_host(args)
         result = livecontainer.install_guest(
