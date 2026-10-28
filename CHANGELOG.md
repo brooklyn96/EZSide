@@ -4,6 +4,25 @@ All notable changes to iPASide are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.2.1] - 2026-10-28
+
+### Fixed
+
+- **An uninstall or pairing export never reaches a phone the user did not pick.** An uninstall
+  from a list shown after a failed listing is refused while phones are listed, instead of going
+  out with no UDID; exporting a pairing record captures the phone at the click and fails if it is
+  gone by the time the save dialog closes.
+- **The anisette helper keeps a custom data folder.** It used to drop every `IPASIDE_*` variable,
+  so `IPASIDE_DATA_DIR` was ignored; it now keeps that one and still drops every other, including
+  the Apple ID password.
+- **Closing a Wi-Fi connection no longer waits up to 10 s or logs a false "heartbeat stopped"**
+  when a heartbeat message arrives in the same instant as the close.
+
+### Changed
+
+- While waiting for a dropped phone to answer again, the retry asks its last address each pause
+  and sweeps the network at most once, instead of sweeping the /24 every few seconds.
+
 ## [1.2.0] - 2026-10-28
 
 ### Changed
