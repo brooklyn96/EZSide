@@ -58,7 +58,9 @@ PROJECT_URL = "https://github.com/LiveContainer/LiveContainer"
 
 #: Written into LiveContainer's Documents for the injected dylib to consume.
 REQUEST_NAME = "iPASide-cert-import.plist"
-CERTIFICATE_NAME = "iPASide-certificate.p12"
+CERTIFICATE_NAME = "EZSide-certificate.p12"
+#: Names an earlier build left in Documents; the user would see them beside the new one.
+LEGACY_CERTIFICATE_NAMES = ("iPASide-certificate.p12",)
 
 #: Where LiveContainer keeps the apps it runs inside itself, under its own Documents.
 #: Reachable over house_arrest, which is what lets iPASide put an app there directly.
@@ -290,6 +292,8 @@ async def _write_documents(
     try:
         async with await HouseArrestService.create(client, bundle_id) as service:
             await service.makedirs("/Documents")
+            if CERTIFICATE_NAME in files:
+                await _remove_legacy_certificates(service)
             for name, payload in files.items():
                 target = f"/Documents/{name}"
                 await service.set_file_contents(target, payload)
@@ -297,6 +301,18 @@ async def _write_documents(
     finally:
         await lockdown.close(client)
     return written
+
+
+async def _remove_legacy_certificates(service: Any) -> None:
+    """Drop a ``.p12`` an older build left behind, so only the current name is offered.
+
+    Best effort: it is usually not there, and failing to tidy must not fail the seed.
+    """
+    for name in LEGACY_CERTIFICATE_NAMES:
+        try:
+            await service.rm_single(f"/Documents/{name}")
+        except Exception:  # noqa: BLE001 - not found is the normal case
+            pass
 
 
 @wifi_direct.wifi_operation(cap=120, retry=False)
@@ -658,7 +674,9 @@ def status(serial: str | None = None) -> dict[str, Any]:
         "name": entry.get("name"),
         "version": entry.get("version"),
         "certificate_pending": REQUEST_NAME in documents,
-        "certificate_file_present": CERTIFICATE_NAME in documents,
+        "certificate_file_present": any(
+            name in documents for name in (CERTIFICATE_NAME, *LEGACY_CERTIFICATE_NAMES)
+        ),
         # LiveContainer creates these on first launch, so their absence means it has
         # been installed but never opened.
         "launched": "Applications" in documents,

@@ -111,3 +111,33 @@ def test_sign_ipa_raises_on_zsign_failure(monkeypatch):
         assert False, "expected SigningError"
     except signing.SigningError as exc:
         assert "boom" in str(exc)
+
+
+def test_p12_friendly_name_is_ezside():
+    import datetime
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives.serialization import pkcs12
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name).issuer_name(name).public_key(key.public_key())
+        .serial_number(1).not_valid_before(now).not_valid_after(now + datetime.timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+    key_pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.TraditionalOpenSSL,
+        serialization.NoEncryption(),
+    )
+
+    blob = signing.build_p12(cert.public_bytes(serialization.Encoding.DER), key_pem, "pw")
+
+    loaded = pkcs12.load_pkcs12(blob, b"pw")
+    assert loaded.cert.friendly_name == b"EZSide"

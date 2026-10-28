@@ -57,7 +57,7 @@ def build_p12(cert_der: bytes, key_pem: bytes, password: str = P12_PASSWORD) -> 
         if password
         else serialization.NoEncryption()
     )
-    return pkcs12.serialize_key_and_certificates(b"iPASide", key, cert, None, encryption)
+    return pkcs12.serialize_key_and_certificates(b"EZSide", key, cert, None, encryption)
 
 
 def resolve_zsign() -> str:

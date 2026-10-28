@@ -4,6 +4,14 @@ All notable changes to iPASide are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed
+
+- **LiveContainer's certificate import says EZSide.** The certificate EZSide leaves in LiveContainer
+  is now `EZSide-certificate.p12` (and carries the EZSide name inside), instead of `iPASide-...`.
+  An older `iPASide-certificate.p12` is removed the next time EZSide sets the certificate up.
+
 ## [1.3.1] - 2026-10-28
 
 ### Fixed
