@@ -6,6 +6,31 @@ All notable changes to iPASide are documented here. This project adheres to
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-28
+
+### Changed
+
+- **Background auto-refresh checks every hour instead of once at noon.** A run with nothing due
+  ends at once without touching the phone or Apple. Existing installs move from the old daily task
+  to the hourly one the next time EZSide starts. The settings text and README now say the phone can
+  be reached over Wi-Fi as well as by cable (same Wi-Fi as the PC, Wi-Fi sync on).
+- **The phone is checked before any Apple call.** `refresh` opens lockdown to each recorded phone
+  (USB first, then any transport) before signing anything, so a missing phone no longer costs an
+  Apple round trip. With the new `--unattended` flag, used only by the scheduled run, an app whose
+  phone is not reachable and that still has at least a day left is reported as `deferred` and
+  retried the next hour instead of failing. A record whose certificate was revoked or re-issued is
+  never deferred. A scheduled run that meets another EZSide operation gives up at once and tries
+  again next hour.
+- **The failure notice is shown at most once every 20 hours**, and the stamp is written before the
+  box opens so a box the task kills still counts. The auto-refresh log keeps its newest 2000 lines.
+
+### Added
+
+- **Wi-Fi sync is turned on when an iPhone is plugged in.** While EZSide runs, a phone attached over
+  USB that is already paired gets `EnableWifiConnections` set in the `wireless_lockdown` domain (the
+  "Show this iPhone when on Wi-Fi" switch) if it is off. It never starts pairing, tries once per
+  attach, and never delays device events.
+
 ## [1.2.13] - 2026-10-27
 
 ### Fixed
