@@ -2,11 +2,11 @@
 ; portable Python engine.
 ;
 ; Build (from repo root, after building the app + assembling the engine):
-;   ISCC /DAppVersion=1.2.1 packaging\EZSide.iss
+;   ISCC /DAppVersion=1.3.0 packaging\EZSide.iss
 ; Output: dist\installer\EZSide-Setup-<ver>-x64.exe
 
 #ifndef AppVersion
-  #define AppVersion "1.2.1"
+  #define AppVersion "1.3.0"
 #endif
 #define AppName "EZSide"
 #define AppPublisher "EZSide"
