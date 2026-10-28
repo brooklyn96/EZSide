@@ -60,6 +60,10 @@ class AppPaths {
   /// Log appended by the headless `--auto-refresh` run (one line per app).
   String get autoRefreshLogPath => _join(root, 'autorefresh.log');
 
+  /// When the headless run last showed its failure notice, as one ISO 8601 line.
+  String get autoRefreshNoticeStampPath =>
+      _join(root, 'auto-refresh-last-notice.txt');
+
   /// Theme-only UI settings JSON.
   String get settingsPath => _join(root, 'settings.json');
 

@@ -36,6 +36,15 @@ abstract final class AutoRefreshLog {
           reason = 'refresh failed';
         }
         lines.add('$ts $bundleId error: $reason');
+      } else if (status == 'deferred') {
+        // Not a failure: the phone was not reachable and there is time left.
+        String reason = (entry.error == null || entry.error!.trim().isEmpty)
+            ? 'iPhone not reachable'
+            : EngineException.cleanError(entry.error);
+        if (reason.isEmpty) {
+          reason = 'iPhone not reachable';
+        }
+        lines.add('$ts $bundleId waiting: $reason');
       } else {
         lines.add('$ts $bundleId $status');
       }

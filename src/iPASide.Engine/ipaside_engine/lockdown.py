@@ -84,6 +84,17 @@ async def create(serial: str | None = None, prefer_usb: bool = True) -> Any:
     raise device.DeviceError(_unreachable(serial, last, forced)) from last
 
 
+async def probe(serial: str) -> None:
+    """Raise ``DeviceError`` unless a phone answers a lockdown connection right now.
+
+    One ``create`` under the normal transport policy (so a phone that is only on Wi-Fi
+    counts as reachable when the connection setting allows it), closed again straight
+    away. It reads nothing from the phone: ``refresh`` uses it to find out, before any
+    Apple call, whether an install could succeed at all.
+    """
+    await close(await create(serial))
+
+
 def _unreachable(serial: str, cause: Exception | None, forced: str | None) -> str:
     """Why a known device could not be reached, in words worth showing a person.
 

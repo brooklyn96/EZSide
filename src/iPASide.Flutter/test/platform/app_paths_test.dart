@@ -204,6 +204,13 @@ void main() {
       );
     });
 
+    test('derives the auto-refresh notice stamp path beside the log', () {
+      expect(
+        paths.autoRefreshNoticeStampPath,
+        _join(<String>[r'C:\data\EZSide', 'auto-refresh-last-notice.txt']),
+      );
+    });
+
     test('derives the settings path from the root', () {
       expect(
         paths.settingsPath,

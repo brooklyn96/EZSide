@@ -68,7 +68,7 @@ class SettingsViewModel extends BaseViewModel {
   /// False hides the whole Auto-refresh card: this OS has no scheduler.
   bool get autoRefreshSupported => _scheduler.isSupported;
 
-  /// Whether the daily background schedule currently exists.
+  /// Whether the hourly background schedule currently exists.
   bool get autoRefreshEnabled => _autoRefreshEnabled;
 
   /// True while a create/delete round-trip runs; the toggle is disabled.
@@ -97,7 +97,7 @@ class SettingsViewModel extends BaseViewModel {
       final actual = await _scheduler.isEnabled();
       _autoRefreshEnabled = actual;
       _isAutoRefreshMessageError = false;
-      _autoRefreshMessage = actual ? 'On \u2014 runs daily at noon.' : 'Off.';
+      _autoRefreshMessage = actual ? 'On \u2014 checks every hour.' : 'Off.';
     } catch (error) {
       _autoRefreshEnabled = !enabled;
       _isAutoRefreshMessageError = true;

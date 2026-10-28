@@ -34,10 +34,17 @@ class _FakeRunner with EngineCommandRunner {
 
 /// An in-memory settings store, so the headless run never reads the real file.
 class _FakeSettings extends SettingsStore {
-  _FakeSettings({this.signedIpa = const SignedIpaSettings()});
+  _FakeSettings({
+    this.signedIpa = const SignedIpaSettings(),
+    this.connection = 'auto',
+  });
 
   SignedIpaSettings signedIpa;
+  String connection;
   int reads = 0;
+
+  @override
+  String loadConnection() => connection;
 
   @override
   SignedIpaSettings loadSignedIpa() {
@@ -98,9 +105,26 @@ void main() {
       expect(code, 0);
       expect(
         runner.calls.single,
-        <String>['refresh'],
+        <String>['refresh', '--unattended'],
         reason: 'neither --all nor --bundle-id is how the engine is told '
-            '"only the ones that are due"',
+            '"only the ones that are due"; --unattended makes it check the '
+            'phone first',
+      );
+    });
+
+    test('passes the stored connection to the engine', () async {
+      final _FakeRunner runner = _FakeRunner();
+
+      await AutoRefreshRunner.run(
+        paths: paths,
+        settings: _FakeSettings(connection: 'wifi'),
+        transport: runner,
+        notice: notice,
+      );
+
+      expect(
+        runner.calls.single,
+        <String>['refresh', '--unattended', '--connection', 'wifi'],
       );
     });
 
@@ -116,7 +140,10 @@ void main() {
         notice: notice,
       );
 
-      expect(runner.calls.single, <String>['refresh', '--keep-signed']);
+      expect(
+        runner.calls.single,
+        <String>['refresh', '--unattended', '--keep-signed'],
+      );
     });
 
     test('passes the configured folder too', () async {
@@ -136,6 +163,7 @@ void main() {
 
       expect(runner.calls.single, <String>[
         'refresh',
+        '--unattended',
         '--keep-signed',
         '--signed-dir',
         r'D:\Signed',
@@ -280,6 +308,169 @@ void main() {
       );
 
       expect(code, 1);
+    });
+  });
+
+  /// A summary with one app per status; every status but 'ok' carries an error
+  /// text, as the engine's deferred and error entries do.
+  EngineResult summaryOf(List<String> statuses) => EngineResult(
+        ok: true,
+        data: <String, dynamic>{
+          'refreshed': <dynamic>[
+            for (int i = 0; i < statuses.length; i++)
+              <String, dynamic>{
+                'bundle_id': 'com.app$i',
+                'status': statuses[i],
+                if (statuses[i] != 'ok') 'error': 'Device X is not connected.',
+              },
+          ],
+        },
+      );
+
+  group('AutoRefreshRunner deferred apps', () {
+    test('ok and deferred only: exit 0, no notice, logged as waiting',
+        () async {
+      final int code = await AutoRefreshRunner.run(
+        paths: paths,
+        settings: _FakeSettings(),
+        transport: _FakeRunner(outcome: summaryOf(<String>['ok', 'deferred'])),
+        notice: notice,
+      );
+
+      expect(code, 0);
+      expect(notices, isEmpty);
+      expect(log(), contains('com.app0 ok'));
+      expect(
+        log(),
+        matches(RegExp(r'\S+ com\.app1 waiting: Device X is not connected\.')),
+      );
+      expect(File(paths.autoRefreshNoticeStampPath).existsSync(), isFalse);
+    });
+
+    test('a deferred app next to a failed one counts only the failure',
+        () async {
+      final int code = await AutoRefreshRunner.run(
+        paths: paths,
+        settings: _FakeSettings(),
+        transport:
+            _FakeRunner(outcome: summaryOf(<String>['deferred', 'error'])),
+        notice: notice,
+      );
+
+      expect(code, 1);
+      expect(notices.single.$2, contains('1 app(s)'));
+    });
+  });
+
+  group('AutoRefreshRunner notice rate limit', () {
+    final DateTime t0 = DateTime.utc(2026, 10, 28, 8);
+
+    Future<int> failingRun(DateTime at) => AutoRefreshRunner.run(
+          paths: paths,
+          settings: _FakeSettings(),
+          transport: _FakeRunner(outcome: summaryOf(<String>['error'])),
+          notice: notice,
+          now: () => at,
+        );
+
+    File stamp() => File(paths.autoRefreshNoticeStampPath);
+
+    test('the first failure shows the notice and stamps the time', () async {
+      expect(await failingRun(t0), 1);
+
+      expect(notices, hasLength(1));
+      expect(DateTime.parse(stamp().readAsStringSync()), t0);
+    });
+
+    test('a failure within 20 hours logs and exits 1 but shows nothing',
+        () async {
+      await failingRun(t0);
+      notices.clear();
+
+      final int code = await failingRun(t0.add(const Duration(hours: 19)));
+
+      expect(code, 1);
+      expect(notices, isEmpty);
+      expect(
+        RegExp('com.app0 error').allMatches(log()),
+        hasLength(2),
+        reason: 'the log is written on every run',
+      );
+      expect(
+        DateTime.parse(stamp().readAsStringSync()),
+        t0,
+        reason: 'a suppressed notice does not move the stamp',
+      );
+    });
+
+    test('after 20 hours the notice is shown again and the stamp moves',
+        () async {
+      await failingRun(t0);
+      notices.clear();
+      final DateTime later = t0.add(const Duration(hours: 20));
+
+      await failingRun(later);
+
+      expect(notices, hasLength(1));
+      expect(DateTime.parse(stamp().readAsStringSync()), later);
+    });
+
+    test('a garbled stamp counts as no notice shown yet', () async {
+      stamp().writeAsStringSync('not a time');
+
+      expect(await failingRun(t0), 1);
+
+      expect(notices, hasLength(1));
+      expect(DateTime.parse(stamp().readAsStringSync()), t0);
+    });
+
+    test('a stamp from the future does not silence the notice', () async {
+      stamp().writeAsStringSync(
+        t0.add(const Duration(days: 3)).toIso8601String(),
+      );
+
+      await failingRun(t0);
+
+      expect(notices, hasLength(1));
+    });
+
+    test('a stamp that cannot be read or written leaves the exit code alone',
+        () async {
+      // A folder where the file should be: reading and writing both fail.
+      Directory(paths.autoRefreshNoticeStampPath).createSync();
+
+      final int code = await failingRun(t0);
+
+      expect(code, 1);
+      expect(notices, hasLength(1));
+    });
+
+    test('a notice that cannot be shown does not stamp the time', () async {
+      final int code = await AutoRefreshRunner.run(
+        paths: paths,
+        settings: _FakeSettings(),
+        transport: _FakeRunner(outcome: summaryOf(<String>['error'])),
+        notice: (String title, String message) => throw StateError('no ui'),
+        now: () => t0,
+      );
+
+      expect(code, 1);
+      expect(stamp().existsSync(), isFalse);
+    });
+
+    test('a thrown run is rate limited the same way', () async {
+      Future<int> thrown(DateTime at) => AutoRefreshRunner.run(
+            paths: paths,
+            settings: _FakeSettings(),
+            transport: _FakeRunner(outcome: EngineException('engine down')),
+            notice: notice,
+            now: () => at,
+          );
+
+      await thrown(t0);
+      await thrown(t0.add(const Duration(hours: 1)));
+
+      expect(notices, hasLength(1));
     });
   });
 
