@@ -256,7 +256,6 @@ async def watch_usbmux(
     tried: set[str] = set()
     on_cable: set[str] = set()
     syncing: set[asyncio.Task[None]] = set()
-    relistened = False
 
     def _sync_done(task: asyncio.Task[None]) -> None:
         syncing.discard(task)
@@ -264,18 +263,12 @@ async def watch_usbmux(
             task.exception()  # retrieved so a failed announce is not logged as unhandled
 
     def sync_new_cable_phones(entries: list[dict[str, Any]]) -> None:
-        nonlocal relistened
         now = {
             str(entry["serial"])
             for entry in entries
             if entry.get("connection_type") == "USB" and entry.get("serial")
         }
         tried.difference_update(on_cable - now)
-        if relistened:
-            # The socket was down, so a Detached may have been missed: a phone that is
-            # not announced again is gone, and its next attach is a real one.
-            tried.intersection_update(now)
-            relistened = False
         on_cable.clear()
         on_cable.update(now)
         for serial in sorted(now - tried):
@@ -300,8 +293,11 @@ async def watch_usbmux(
                 if had_listen:
                     publish([mux_device_to_entry(dev) for dev in mux.devices])
                 had_listen = True
-                on_cable.clear()  # a new session announces everyone afresh
-                relistened = True
+                # A new session announces everyone afresh, one device per update. Accepted
+                # limit: a phone unplugged and re-plugged while the socket was down is not
+                # retried until its next observed Detached/Attached, because a partial
+                # replay cannot prove absence.
+                on_cable.clear()
                 while not stop.is_set():
                     update = asyncio.create_task(mux.receive_device_state_update())
                     done, _pending = await asyncio.wait(

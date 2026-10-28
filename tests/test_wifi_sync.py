@@ -270,22 +270,92 @@ def test_rapid_repeat_attaches_of_one_serial_try_once(monkeypatch):
     _run(scenario())
 
 
-def test_re_listening_does_not_retry_a_phone_still_plugged_in(monkeypatch):
+async def _reconnect(h):
+    """Drop the Listen socket; a fresh mux starts empty, like real usbmux."""
+    wanted = len(h.muxes) + 1
+    await h.push("drop")
+    while len(h.muxes) < wanted:
+        await asyncio.sleep(0.01)
+    assert h.muxes[-1].devices == []
+
+
+def test_re_listening_does_not_retry_phones_still_plugged_in(monkeypatch):
+    async def scenario():
+        h = _Harness(monkeypatch)
+        await h.start()
+        await h.push("add", _MuxDev(7, UDID, "USB"))
+        await h.push("add", _MuxDev(8, OTHER, "USB"))
+        await h.settle()
+        assert [c["serial"] for c in h.creates] == [UDID, OTHER]
+
+        for devid in (20, 30, 40):  # usbmux re-announces one device per update
+            await _reconnect(h)
+            await h.push("add", _MuxDev(devid, UDID, "USB"))
+            await h.settle()
+            await h.push("add", _MuxDev(devid + 1, OTHER, "USB"))
+            await h.settle()
+
+        assert [c["serial"] for c in h.creates] == [UDID, OTHER]
+        await h.finish()
+
+    _run(scenario())
+
+
+def test_a_phone_announced_network_first_after_a_reconnect_is_not_retried(monkeypatch):
+    async def scenario():
+        h = _Harness(monkeypatch)
+        await h.start()
+        await h.push("add", _MuxDev(7, UDID, "USB"))
+        await h.push("add", _MuxDev(20, UDID, "Network"))
+        await h.settle()
+        assert len(h.creates) == 1
+
+        await _reconnect(h)
+        await h.push("add", _MuxDev(21, UDID, "Network"))
+        await h.settle()
+        await h.push("add", _MuxDev(8, UDID, "USB"))
+        await h.settle()
+
+        assert len(h.creates) == 1
+        await h.finish()
+
+    _run(scenario())
+
+
+def test_a_detach_missed_while_the_socket_was_down_is_not_retried(monkeypatch):
     async def scenario():
         h = _Harness(monkeypatch)
         await h.start()
         await h.push("add", _MuxDev(7, UDID, "USB"))
         await h.settle()
-        assert len(h.creates) == 1
 
-        await h.push("drop")  # Listen socket dies; the watcher opens a new one
-        while len(h.muxes) < 2:
-            await asyncio.sleep(0.01)
-        h.muxes[1].devices.append(_MuxDev(7, UDID, "USB"))
-        await h.push("add", _MuxDev(9, OTHER, "Network"))  # usbmux re-announces everyone
+        await _reconnect(h)  # the phone left meanwhile; nothing is announced for it
+        await h.push("add", _MuxDev(9, OTHER, "Network"))
         await h.settle()
 
+        assert [c["serial"] for c in h.creates] == [UDID]
+        await h.finish()
+
+    _run(scenario())
+
+
+def test_an_observed_detach_then_attach_tries_exactly_once_more(monkeypatch):
+    async def scenario():
+        h = _Harness(monkeypatch)
+        await h.start()
+        await h.push("add", _MuxDev(7, UDID, "USB"))
+        await h.settle()
+        await _reconnect(h)
+        await h.push("add", _MuxDev(8, UDID, "USB"))
+        await h.settle()
         assert len(h.creates) == 1
+
+        await h.push("remove", 8)  # Detached seen on the new socket
+        await h.settle()
+        await h.push("add", _MuxDev(9, UDID, "USB"))
+        await h.settle()
+
+        assert [c["serial"] for c in h.creates] == [UDID, UDID]
         await h.finish()
 
     _run(scenario())
@@ -322,28 +392,6 @@ def test_a_missing_switch_value_counts_as_off(monkeypatch):
         await h.settle()
 
         assert h.clients[0].sets == [True]
-        await h.finish()
-
-    _run(scenario())
-
-
-def test_a_phone_replugged_while_the_socket_was_down_is_tried_again(monkeypatch):
-    async def scenario():
-        h = _Harness(monkeypatch)
-        await h.start()
-        await h.push("add", _MuxDev(7, UDID, "USB"))
-        await h.settle()
-        assert len(h.creates) == 1
-
-        await h.push("drop")  # the phone is unplugged while the new socket is not up yet
-        while len(h.muxes) < 2:
-            await asyncio.sleep(0.01)
-        await h.push("add", _MuxDev(9, OTHER, "Network"))  # first announcement: no phone
-        await h.settle()
-        await h.push("add", _MuxDev(10, UDID, "USB"))  # plugged back in: a real attach
-        await h.settle()
-
-        assert [c["serial"] for c in h.creates] == [UDID, UDID]
         await h.finish()
 
     _run(scenario())
