@@ -8,11 +8,13 @@ values for a chosen device.
 from __future__ import annotations
 
 import asyncio
+import json
+import sys
 import threading
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from . import lockdown
+from . import lockdown, paths
 from ._asyncutil import maybe_await, run
 from .errors import EngineError
 
@@ -137,6 +139,79 @@ async def _wait_until_stopped(stop: threading.Event) -> None:
     await asyncio.to_thread(stop.wait)
 
 
+def _announce(message: str) -> None:
+    """One progress-style line on the process's own stderr.
+
+    Written to ``sys.__stderr__`` rather than ``sys.stderr``: while ``serve`` runs a
+    request it swaps ``sys.stderr`` for a writer that turns every line into that
+    request's progress frame, and a Wi-Fi sync note from the Listen thread has nothing
+    to do with whatever the user happens to be installing at that moment.
+    """
+    event = {"event": "progress", "phase": "wifi-sync", "percent": None, "step": message}
+    print(json.dumps(event), file=sys.__stderr__ or sys.stderr, flush=True)
+
+
+async def _enable_wifi_sync(serial: str) -> None:
+    """Turn on "Show this iPhone when on Wi-Fi" for a phone that is on the cable.
+
+    That is the lockdown switch (``EnableWifiConnections``) iTunes flips; while it is
+    off the phone stops advertising itself over the network, so it vanishes from the
+    list the moment it is unplugged. It is only ever written when it is not already
+    on, and only over USB - a Wi-Fi connection is no place to change Wi-Fi settings.
+
+    It never starts pairing: that stays with the app's own device-info request, and two
+    pairing loops on one phone could leave a pair record that no longer matches it. A
+    phone this PC is not paired with yet is skipped without a word.
+
+    Never raises: a locked or untrusted phone or a lockdown error just means no Wi-Fi
+    sync this time, and that must not take the watcher down with it.
+    """
+    from pymobiledevice3.exceptions import MissingValueError, NotPairedError
+    from pymobiledevice3.lockdown import create_using_usbmux
+
+    label = serial[:8]
+    client = None
+    try:
+        # Same pair-record folder as ``lockdown.create``, so the phone is reached with
+        # the pairing the rest of the engine uses. ``lockdown.create`` itself is not
+        # used because its transport policy may fall back to Wi-Fi or follow the
+        # connection setting; this must be the cable.
+        records = paths.data_dir() / "lockdown"
+        records.mkdir(parents=True, exist_ok=True)
+        client = await maybe_await(
+            create_using_usbmux(
+                serial=serial,
+                connection_type="USB",
+                pairing_records_cache_folder=records,
+                autopair=False,
+            )
+        )
+        if not client.paired:
+            return
+        try:
+            if await maybe_await(client.get_enable_wifi_connections()):
+                return
+        except MissingValueError:
+            pass  # never written on this phone: that is "off"
+        label = (await lockdown.all_values(client)).get("DeviceName") or label
+        await maybe_await(client.set_enable_wifi_connections(True))
+        _announce(f"Turned on Wi-Fi sync for {label} so it can refresh without the cable.")
+    except NotPairedError:
+        return
+    except Exception as exc:  # best effort: report it, never propagate
+        detail = str(exc) or type(exc).__name__
+        _announce(
+            f"Could not turn on Wi-Fi sync for {label}: {detail}. "
+            "Unlock the iPhone, tap Trust if it asks, then plug it in again."
+        )
+    finally:
+        if client is not None:
+            try:
+                await lockdown.close(client)
+            except Exception:
+                pass
+
+
 async def watch_usbmux(
     emit: Callable[[dict[str, Any]], None],
     stop: threading.Event,
@@ -174,6 +249,36 @@ async def watch_usbmux(
         last = signature
         emit({"type": "event", "name": "devices", "data": entries})
 
+    # Phones already tried this attach, and the cable phones seen in the current Listen
+    # session. A serial stays in ``tried`` until a Detached is seen for it, so usbmux
+    # re-announcing a phone after the Listen socket is re-opened does not start another
+    # attempt; the next real attach after an unplug does.
+    tried: set[str] = set()
+    on_cable: set[str] = set()
+    syncing: set[asyncio.Task[None]] = set()
+
+    def _sync_done(task: asyncio.Task[None]) -> None:
+        syncing.discard(task)
+        if not task.cancelled():
+            task.exception()  # retrieved so a failed announce is not logged as unhandled
+
+    def sync_new_cable_phones(entries: list[dict[str, Any]]) -> None:
+        now = {
+            str(entry["serial"])
+            for entry in entries
+            if entry.get("connection_type") == "USB" and entry.get("serial")
+        }
+        tried.difference_update(on_cable - now)
+        on_cable.clear()
+        on_cable.update(now)
+        for serial in sorted(now - tried):
+            tried.add(serial)
+            # A task, not an await: a locked phone or an unanswered trust dialog can
+            # take a long time, and the Listen loop must keep emitting meanwhile.
+            task = asyncio.create_task(_enable_wifi_sync(serial))
+            syncing.add(task)
+            task.add_done_callback(_sync_done)
+
     try:
         while not stop.is_set():
             mux: Any = None
@@ -188,6 +293,11 @@ async def watch_usbmux(
                 if had_listen:
                     publish([mux_device_to_entry(dev) for dev in mux.devices])
                 had_listen = True
+                # A new session announces everyone afresh, one device per update. Accepted
+                # limit: a phone unplugged and re-plugged while the socket was down is not
+                # retried until its next observed Detached/Attached, because a partial
+                # replay cannot prove absence.
+                on_cable.clear()
                 while not stop.is_set():
                     update = asyncio.create_task(mux.receive_device_state_update())
                     done, _pending = await asyncio.wait(
@@ -203,7 +313,9 @@ async def watch_usbmux(
                                 pass
                         return
                     await update
-                    publish([mux_device_to_entry(dev) for dev in mux.devices])
+                    entries = [mux_device_to_entry(dev) for dev in mux.devices]
+                    publish(entries)
+                    sync_new_cable_phones(entries)
             except (OSError, MuxException):
                 if stop.is_set():
                     return
@@ -217,6 +329,10 @@ async def watch_usbmux(
                         except OSError:
                             pass
     finally:
+        for task in list(syncing):
+            task.cancel()
+        if syncing:
+            await asyncio.gather(*syncing, return_exceptions=True)
         if not stopped.done():
             stopped.cancel()
             try:

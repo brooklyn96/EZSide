@@ -241,19 +241,40 @@ class UnsupportedBackgroundRefreshScheduler
   );
 }
 
+/// The registered task's XML, or null when it is not there or cannot be read.
+Future<String?> _queryTaskXml() async {
+  final ProcessResult result = await Process.run('schtasks', <String>[
+    '/Query',
+    '/TN',
+    autoRefreshTaskName,
+    '/XML',
+  ]);
+  final Object? out = result.stdout;
+  return result.exitCode == 0 && out is String ? out : null;
+}
+
 /// Brings a task registered by an older build up to date.
 ///
 /// An install that turned auto-refresh on while it was a daily-noon task keeps
-/// that task until it is registered again, so every app start re-registers it
-/// (`/F`, same name) when it exists. When auto-refresh is off nothing is
-/// created. A failure here is swallowed: the old task still runs, and a start-up
-/// check must never stop the app from opening.
-Future<void> refreshAutoRefreshTask(BackgroundRefreshScheduler scheduler) async {
+/// that task until it is registered again. The task is read at app start and
+/// registered again (`/F`, same name) only when it has no hourly repetition, so
+/// a current task is left alone and a launch never re-points it at another
+/// EZSide.exe. When auto-refresh is off nothing is created. A failure here is
+/// swallowed: the old task still runs, and a start-up check must never stop the
+/// app from opening. [readTaskXml] is the process seam for tests.
+Future<void> refreshAutoRefreshTask(
+  BackgroundRefreshScheduler scheduler, {
+  Future<String?> Function() readTaskXml = _queryTaskXml,
+}) async {
   try {
-    if (scheduler.isSupported && await scheduler.isEnabled()) {
-      await scheduler.setEnabled(true);
-    }
+    if (!scheduler.isSupported || !await scheduler.isEnabled()) return;
+    final String? xml = await readTaskXml();
+    if (xml == null || _isHourly(xml)) return;
+    await scheduler.setEnabled(true);
   } catch (_) {
     // Left as it is; Settings shows the real state and any error on toggle.
   }
 }
+
+bool _isHourly(String xml) =>
+    RegExp(r'<Repetition>\s*<Interval>PT1H</Interval>').hasMatch(xml);

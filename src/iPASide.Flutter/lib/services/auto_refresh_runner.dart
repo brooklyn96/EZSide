@@ -126,9 +126,12 @@ abstract final class AutoRefreshRunner {
       // box every hour; the log above still records every run.
       final String stampPath = appPaths.autoRefreshNoticeStampPath;
       if (exitCode != 0 && _noticeDue(stampPath, now())) {
+        // Stamped BEFORE the box: it blocks until closed, and the task's
+        // 1-hour limit kills a process whose box nobody answered, so a stamp
+        // written afterwards would never exist in exactly the unattended case.
+        _writeNoticeStamp(stampPath, now());
         try {
           notice('EZSide', failureText(failedApps));
-          _writeNoticeStamp(stampPath, now());
         } catch (_) {
           // The log already holds the failure; a notice that cannot be shown
           // must not change the exit code.
@@ -196,6 +199,35 @@ abstract final class AutoRefreshRunner {
     } on FileSystemException {
       // The refresh itself already happened; failing the run over an unwritable
       // log would only make the scheduled task look broken.
+      return;
+    }
+    await _trimLog(path);
+  }
+
+  /// The task runs every hour, so the log is kept to the newest [_maxLogLines].
+  static const int _maxLogLines = 2000;
+
+  /// Runs after the new lines are appended and writes through a temp file, so a
+  /// failure here (never rethrown) leaves the full log, new lines included.
+  static Future<void> _trimLog(String path) async {
+    final File temp = File('$path.tmp');
+    try {
+      final List<String> all = await File(path).readAsLines();
+      if (all.length <= _maxLogLines) return;
+      await temp.writeAsString(
+        all
+            .sublist(all.length - _maxLogLines)
+            .map((String line) => '$line${Platform.lineTerminator}')
+            .join(),
+        flush: true,
+      );
+      await temp.rename(path);
+    } catch (_) {
+      try {
+        if (temp.existsSync()) temp.deleteSync();
+      } catch (_) {
+        // A stray temp file is overwritten by the next trim.
+      }
     }
   }
 }

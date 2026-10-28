@@ -100,19 +100,46 @@ void main() {
     });
 
     group('upgrading the auto-refresh task at app start', () {
-      test('re-registers an existing task so an old daily one becomes hourly',
+      const String oldXml =
+          '<Task><Triggers><CalendarTrigger><StartBoundary>2026-01-01T12:00:00'
+          '</StartBoundary></CalendarTrigger></Triggers></Task>';
+      const String hourlyXml =
+          '<Task><Triggers><CalendarTrigger><Repetition><Interval>PT1H'
+          '</Interval><Duration>P1D</Duration></Repetition></CalendarTrigger>'
+          '</Triggers></Task>';
+
+      test('re-registers an old daily task once so it becomes hourly',
           () async {
         final _FakeScheduler scheduler = _FakeScheduler(exists: true);
 
-        await refreshAutoRefreshTask(scheduler);
+        await refreshAutoRefreshTask(scheduler, readTaskXml: () async => oldXml);
 
         expect(scheduler.setCalls, <bool>[true]);
+      });
+
+      test('leaves a task that is already hourly alone', () async {
+        final _FakeScheduler scheduler = _FakeScheduler(exists: true);
+
+        await refreshAutoRefreshTask(
+          scheduler,
+          readTaskXml: () async => hourlyXml,
+        );
+
+        expect(scheduler.setCalls, isEmpty);
+      });
+
+      test('leaves a task whose definition cannot be read alone', () async {
+        final _FakeScheduler scheduler = _FakeScheduler(exists: true);
+
+        await refreshAutoRefreshTask(scheduler, readTaskXml: () async => null);
+
+        expect(scheduler.setCalls, isEmpty);
       });
 
       test('creates nothing when auto-refresh is off', () async {
         final _FakeScheduler scheduler = _FakeScheduler(exists: false);
 
-        await refreshAutoRefreshTask(scheduler);
+        await refreshAutoRefreshTask(scheduler, readTaskXml: () async => oldXml);
 
         expect(scheduler.setCalls, isEmpty);
       });
@@ -123,7 +150,7 @@ void main() {
           supported: false,
         );
 
-        await refreshAutoRefreshTask(scheduler);
+        await refreshAutoRefreshTask(scheduler, readTaskXml: () async => oldXml);
 
         expect(scheduler.setCalls, isEmpty);
       });
@@ -134,7 +161,10 @@ void main() {
           setFailure: BackgroundRefreshException('schtasks failed'),
         );
 
-        await expectLater(refreshAutoRefreshTask(scheduler), completes);
+        await expectLater(
+          refreshAutoRefreshTask(scheduler, readTaskXml: () async => oldXml),
+          completes,
+        );
         expect(scheduler.setCalls, <bool>[true]);
       });
 
@@ -144,7 +174,24 @@ void main() {
           queryFailure: BackgroundRefreshException('schtasks failed'),
         );
 
-        await expectLater(refreshAutoRefreshTask(scheduler), completes);
+        await expectLater(
+          refreshAutoRefreshTask(scheduler, readTaskXml: () async => oldXml),
+          completes,
+        );
+        expect(scheduler.setCalls, isEmpty);
+      });
+
+      test('a failed XML read does not throw', () async {
+        final _FakeScheduler scheduler = _FakeScheduler(exists: true);
+
+        await expectLater(
+          refreshAutoRefreshTask(
+            scheduler,
+            readTaskXml: () async =>
+                throw const ProcessException('schtasks', <String>[]),
+          ),
+          completes,
+        );
         expect(scheduler.setCalls, isEmpty);
       });
     });
@@ -371,14 +418,16 @@ void main() {
             () {
           expect(xml, contains('<StartBoundary>2026-01-01T00:00:00</StartBoundary>'));
           expect(xml, contains('<DaysInterval>1</DaysInterval>'));
+          // Whitespace-tolerant: the XML's line endings follow the source file's.
           expect(
             xml,
-            contains(
-              '<Repetition>\n'
-              '        <Interval>PT1H</Interval>\n'
-              '        <Duration>P1D</Duration>\n'
-              '        <StopAtDurationEnd>false</StopAtDurationEnd>\n'
-              '      </Repetition>',
+            matches(
+              RegExp(
+                r'<CalendarTrigger>\s*<Repetition>\s*<Interval>PT1H</Interval>'
+                r'\s*<Duration>P1D</Duration>'
+                r'\s*<StopAtDurationEnd>false</StopAtDurationEnd>'
+                r'\s*</Repetition>',
+              ),
             ),
           );
         });

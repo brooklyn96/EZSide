@@ -445,7 +445,27 @@ void main() {
       expect(notices, hasLength(1));
     });
 
-    test('a notice that cannot be shown does not stamp the time', () async {
+    test('the stamp is already written when the notice is shown', () async {
+      // The box blocks until closed and the task's 1-hour limit can kill the
+      // process meanwhile, so the stamp must not wait for notice() to return.
+      bool stampedAtNotice = false;
+
+      await AutoRefreshRunner.run(
+        paths: paths,
+        settings: _FakeSettings(),
+        transport: _FakeRunner(outcome: summaryOf(<String>['error'])),
+        notice: (String title, String message) {
+          stampedAtNotice = stamp().existsSync();
+        },
+        now: () => t0,
+      );
+
+      expect(stampedAtNotice, isTrue);
+      expect(DateTime.parse(stamp().readAsStringSync()), t0);
+    });
+
+    test('a notice that throws still leaves the stamp and exit code 1',
+        () async {
       final int code = await AutoRefreshRunner.run(
         paths: paths,
         settings: _FakeSettings(),
@@ -455,7 +475,24 @@ void main() {
       );
 
       expect(code, 1);
-      expect(stamp().existsSync(), isFalse);
+      expect(DateTime.parse(stamp().readAsStringSync()), t0);
+    });
+
+    test('a run killed during the notice is not noticed again next hour',
+        () async {
+      // First run: the box is left open and the process is killed - modelled by
+      // a notice that throws after the stamp was written.
+      await AutoRefreshRunner.run(
+        paths: paths,
+        settings: _FakeSettings(),
+        transport: _FakeRunner(outcome: summaryOf(<String>['error'])),
+        notice: (String title, String message) => throw StateError('killed'),
+        now: () => t0,
+      );
+
+      await failingRun(t0.add(const Duration(hours: 1)));
+
+      expect(notices, isEmpty);
     });
 
     test('a thrown run is rate limited the same way', () async {
@@ -545,6 +582,65 @@ void main() {
       );
 
       expect(File(nested.autoRefreshLogPath).existsSync(), isTrue);
+    });
+
+    test('keeps only the newest 2000 lines', () async {
+      File(paths.autoRefreshLogPath).writeAsStringSync(
+        '${List<String>.generate(3000, (int i) => 'old $i').join('\n')}\n',
+      );
+
+      await AutoRefreshRunner.run(
+        paths: paths,
+        settings: _FakeSettings(),
+        transport: _FakeRunner(),
+        notice: notice,
+      );
+
+      final List<String> lines =
+          File(paths.autoRefreshLogPath).readAsLinesSync();
+      expect(lines, hasLength(2000));
+      expect(lines.first, 'old 1001');
+      expect(lines[1998], 'old 2999');
+      expect(lines.last, contains('nothing to refresh'));
+      expect(File('${paths.autoRefreshLogPath}.tmp').existsSync(), isFalse);
+    });
+
+    test('a log under the limit is left alone', () async {
+      File(paths.autoRefreshLogPath).writeAsStringSync('old 0\nold 1\n');
+
+      await AutoRefreshRunner.run(
+        paths: paths,
+        settings: _FakeSettings(),
+        transport: _FakeRunner(),
+        notice: notice,
+      );
+
+      final List<String> lines =
+          File(paths.autoRefreshLogPath).readAsLinesSync();
+      expect(lines, hasLength(3));
+      expect(lines.first, 'old 0');
+    });
+
+    test('a log that cannot be trimmed keeps the new line and the exit code',
+        () async {
+      File(paths.autoRefreshLogPath).writeAsStringSync(
+        '${List<String>.generate(2500, (int i) => 'old $i').join('\n')}\n',
+      );
+      // A folder where the temp file should go: the trim cannot write.
+      Directory('${paths.autoRefreshLogPath}.tmp').createSync();
+
+      final int code = await AutoRefreshRunner.run(
+        paths: paths,
+        settings: _FakeSettings(),
+        transport: _FakeRunner(),
+        notice: notice,
+      );
+
+      expect(code, 0);
+      final List<String> lines =
+          File(paths.autoRefreshLogPath).readAsLinesSync();
+      expect(lines, hasLength(2501));
+      expect(lines.last, contains('nothing to refresh'));
     });
   });
 }
