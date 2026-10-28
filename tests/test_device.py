@@ -17,6 +17,19 @@ UDID = "935cbbb9b82d25d15566e5939bcea5677b1c44ae"
 OTHER = "0f1e2d3c4b5a69788796a5b4c3d2e1f009876543"
 
 
+@pytest.fixture(autouse=True)
+def no_wifi_sync(monkeypatch):
+    """The watch tests attach USB phones; keep them off the real lockdown service.
+
+    The Wi-Fi sync behaviour itself is covered in ``test_wifi_sync.py``.
+    """
+
+    async def nothing(serial):
+        return None
+
+    monkeypatch.setattr(device, "_enable_wifi_sync", nothing)
+
+
 @pytest.fixture
 def fake_devices(monkeypatch):
     """Replace the usbmux enumeration - both the sync and the async one."""

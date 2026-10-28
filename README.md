@@ -131,7 +131,7 @@ There is a full light theme too, and the sun in the title bar switches to it.
 - **Keep your apps working.** The Library counts down each app's 7 days, and a
   background task checks every hour and re-signs whatever is due — no need to leave
   iPASide open. It works over Wi-Fi too (same Wi-Fi as the PC, with Wi-Fi sync on in
-  Finder or iTunes); a cable is the most reliable.
+  Apple Devices or iTunes); a cable is the most reliable.
 - **Use more than one Apple ID.** Keep several signed in and switch without typing
   a password again — useful when one account has used up its ten App IDs for the
   week. A refresh always re-signs as the account that signed the app, because a
