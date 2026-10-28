@@ -199,6 +199,20 @@ class DeviceSelection extends BaseViewModel {
     return null;
   }
 
+  /// What an action reports when the phone it was started for is gone.
+  static const String targetGoneMessage = 'iPhone đã chọn không còn kết nối';
+
+  /// Whether an action can no longer go to [udid], the target it captured when
+  /// it started, with [wasEmpty] being [isEmpty] at that moment.
+  ///
+  /// Checked right before the engine call, so the action never lands on another
+  /// phone: a captured phone that left the list is gone, and so is a null target
+  /// captured when the list was known to be empty, since a phone that appeared
+  /// since was never the one clicked for. A null target from before the first
+  /// load, or from a listing that failed, is left to the engine as it always was.
+  bool isTargetGone(String? udid, {required bool wasEmpty}) =>
+      udid == null ? wasEmpty : !_isConnected(udid);
+
   /// Whether a [refresh] is in flight.
   bool get isLoading => _isLoading;
 

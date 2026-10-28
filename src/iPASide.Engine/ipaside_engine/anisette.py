@@ -378,13 +378,23 @@ def _worker_command() -> list[str]:
     return command
 
 
+_KEPT_ENV = "IPASIDE_DATA_DIR"
+
+
 def _worker_env() -> dict[str, str]:
     """This process's environment, minus anything per-request such as the password.
 
     The serve loop puts ``IPASIDE_APPLE_PASSWORD`` into ``os.environ`` for the length of
-    a login. The helper never needs it, so it is not handed to it.
+    a login. The helper never needs it, so it is not handed to it. Allow-list, not
+    deny-list: the serve loop copies any key of a request's ``env`` into ``os.environ``, so
+    every ``IPASIDE_*`` setting is dropped except ``IPASIDE_DATA_DIR``, which the helper
+    needs to keep its cached state in the same data folder as the engine.
     """
-    return {key: value for key, value in os.environ.items() if not key.startswith("IPASIDE_")}
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key == _KEPT_ENV or not key.startswith("IPASIDE_")
+    }
 
 
 class _AnisetteWorker:

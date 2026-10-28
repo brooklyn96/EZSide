@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:collection';
 
 import 'package:flutter/widgets.dart';
@@ -21,7 +22,14 @@ class _FakeRunner with EngineCommandRunner {
   /// Every argv the facade issued, in order.
   final List<List<String>> calls = <List<String>>[];
 
+  /// Parks the sign-in probe until completed, so a test can move the selection
+  /// while a run is past its click but not yet at the engine.
+  Completer<void>? loginHold;
+
   void always(String command, Object outcome) => _defaults[command] = outcome;
+
+  void next(String command, Object outcome) =>
+      (_scripted[command] ??= Queue<Object>()).add(outcome);
 
   List<List<String>> callsTo(String command) => <List<String>>[
         for (final List<String> argv in calls)
@@ -35,6 +43,7 @@ class _FakeRunner with EngineCommandRunner {
     Map<String, String>? env,
   }) async {
     calls.add(args);
+    if (args.first == 'login') await loginHold?.future;
 
     final String command = args.first;
     final Queue<Object>? queued = _scripted[command];
@@ -310,6 +319,113 @@ void main() {
         runner.callsTo('sideload').map((List<String> argv) => argv.last),
         <String>['AAAA1111', 'BBBB2222'],
       );
+    });
+
+    test('installs to the phone clicked for, even if the selection moves during '
+        'sign-in', () async {
+      final _FakeRunner selectionRunner = _FakeRunner()
+        ..always(
+          'devices',
+          _ok(<dynamic>[
+            <String, dynamic>{'serial': 'AAAA1111', 'connection_type': 'USB'},
+            <String, dynamic>{'serial': 'BBBB2222', 'connection_type': 'USB'},
+          ]),
+        );
+      final DeviceSelection devices = DeviceSelection(
+        engine: EngineApi(selectionRunner),
+        settings: _FakeSettings(),
+      );
+      addTearDown(devices.dispose);
+      await devices.refresh();
+      devices.select('BBBB2222');
+
+      final _FakeRunner runner = _FakeRunner();
+      final SideloadViewModel vm = await _withIpa(runner, devices: devices);
+      runner.loginHold = Completer<void>();
+
+      final Future<void> run = vm.sideload();
+      await pumpEventQueue();
+      devices.select('AAAA1111'); // while the sign-in probe is out
+      runner.loginHold!.complete();
+      await run;
+
+      expect(runner.callsTo('sideload').single.last, 'BBBB2222');
+    });
+
+    test('a phone that drops out during sign-in fails the run, and no other '
+        'phone gets the install', () async {
+      final _FakeRunner selectionRunner = _FakeRunner()
+        ..next(
+          'devices',
+          _ok(<dynamic>[
+            <String, dynamic>{'serial': 'AAAA1111', 'connection_type': 'USB'},
+            <String, dynamic>{
+              'serial': 'BBBB2222',
+              'connection_type': 'Network',
+            },
+          ]),
+        )
+        ..always(
+          'devices',
+          _ok(<dynamic>[
+            <String, dynamic>{'serial': 'AAAA1111', 'connection_type': 'USB'},
+          ]),
+        );
+      final DeviceSelection devices = DeviceSelection(
+        engine: EngineApi(selectionRunner),
+        settings: _FakeSettings(),
+      );
+      addTearDown(devices.dispose);
+      await devices.refresh();
+      devices.select('BBBB2222');
+
+      final _FakeRunner runner = _FakeRunner();
+      final SideloadViewModel vm = await _withIpa(runner, devices: devices);
+      runner.loginHold = Completer<void>();
+
+      final Future<void> run = vm.sideload();
+      await pumpEventQueue();
+      await devices.refresh(); // the Wi-Fi phone leaves the listing
+      runner.loginHold!.complete();
+      await run;
+
+      expect(runner.callsTo('sideload'), isEmpty);
+      expect(vm.isFailed, isTrue);
+      expect(vm.failureMessage, DeviceSelection.targetGoneMessage);
+      expect(vm.isRunning, isFalse);
+    });
+
+    test('no phone at the click installs to none, even one plugged in during '
+        'sign-in', () async {
+      final _FakeRunner selectionRunner = _FakeRunner()
+        ..next('devices', _ok(<dynamic>[]))
+        ..always(
+          'devices',
+          _ok(<dynamic>[
+            <String, dynamic>{'serial': 'AAAA1111', 'connection_type': 'USB'},
+          ]),
+        );
+      final DeviceSelection devices = DeviceSelection(
+        engine: EngineApi(selectionRunner),
+        settings: _FakeSettings(),
+      );
+      addTearDown(devices.dispose);
+      await devices.refresh();
+      expect(devices.isEmpty, isTrue);
+
+      final _FakeRunner runner = _FakeRunner();
+      final SideloadViewModel vm = await _withIpa(runner, devices: devices);
+      runner.loginHold = Completer<void>();
+
+      final Future<void> run = vm.sideload();
+      await pumpEventQueue();
+      await devices.refresh(); // a phone is plugged in
+      expect(devices.selectedUdid, 'AAAA1111');
+      runner.loginHold!.complete();
+      await run;
+
+      expect(runner.callsTo('sideload'), isEmpty);
+      expect(vm.failureMessage, DeviceSelection.targetGoneMessage);
     });
 
     test('both the target and the setting travel together', () async {

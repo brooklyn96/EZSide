@@ -68,6 +68,19 @@ def test_env_override_beats_the_installed_layout(not_installed, monkeypatch, tmp
     assert paths.installs_file() == custom / "sideloads.json"
 
 
+def test_suite_isolation_holds_under_an_installed_interpreter(monkeypatch, tmp_path, isolated_data):
+    """Conftest defaults only: running the suite with the installed python must not
+    resolve to the real install's data folder."""
+    inst = tmp_path / "inst"
+    monkeypatch.setattr(sys, "executable", str(_fake_install(inst)))
+
+    assert paths.installed_app_dir() == inst / "app"  # the trap is really armed
+    data = paths.data_dir()
+    assert data == isolated_data / "EZSide"
+    assert inst not in data.parents
+    assert not (inst / "data").exists()
+
+
 def test_relative_env_override_is_made_absolute(not_installed, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv(paths.DATA_DIR_ENV, "rel-data")

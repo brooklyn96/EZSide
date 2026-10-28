@@ -112,8 +112,17 @@ def test_helper_environment_never_carries_the_password(monkeypatch: pytest.Monke
     monkeypatch.setenv("IPASIDE_ZSIGN", "x")
     monkeypatch.setenv("LOCALAPPDATA", "C:/somewhere")
     env = anisette._worker_env()
-    assert not any(key.startswith("IPASIDE_") for key in env)
+    assert "IPASIDE_APPLE_PASSWORD" not in env
+    assert "IPASIDE_ZSIGN" not in env  # unknown IPASIDE_* keys are dropped too
     assert env["LOCALAPPDATA"] == "C:/somewhere"  # where the cached state lives
+
+
+def test_helper_environment_keeps_the_data_folder(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("IPASIDE_APPLE_PASSWORD", "hunter2")
+    monkeypatch.setenv("IPASIDE_DATA_DIR", "C:/portable/data")
+    env = anisette._worker_env()
+    assert env["IPASIDE_DATA_DIR"] == "C:/portable/data"
+    assert "IPASIDE_APPLE_PASSWORD" not in env
 
 
 def test_isolated_interpreter_flag_is_mirrored(monkeypatch: pytest.MonkeyPatch) -> None:

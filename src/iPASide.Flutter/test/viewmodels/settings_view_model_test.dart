@@ -141,15 +141,20 @@ class _FakePicker implements FilePickerService {
   Future<List<String>> pickTweaks() async =>
       throw UnsupportedError('Settings never opens a tweak.');
 
+  /// Runs while the open or save dialog is up, before it answers.
+  Future<void> Function()? whilePickingPairing;
+
   @override
   Future<String?> pickPairingFile() async {
     pairingOpenCount++;
+    await whilePickingPairing?.call();
     return pairingToOpen;
   }
 
   @override
   Future<String?> savePairingFile({required String suggestedName}) async {
     pairingSaveCount++;
+    await whilePickingPairing?.call();
     return pairingToSave;
   }
 }
@@ -1106,6 +1111,145 @@ void main() {
       expect(model.pairing?.hasRppairing, isTrue);
       expect(model.pairingMessage, contains('Imported'));
       expect(model.isPairingMessageError, isFalse);
+    });
+
+    const String other = 'BBBB2222BBBB2222BBBB2222BBBB2222BBBB2222';
+
+    bool importedFor(String target) => runner.calls.any(
+          (List<String> call) =>
+              call.length >= 5 &&
+              call[0] == 'pairing' &&
+              call[1] == '--import' &&
+              call[3] == '--udid' &&
+              call[4] == target,
+        );
+
+    test('import files the record for the phone clicked for, even if the '
+        'selection moves while the picker is open', () async {
+      runner.results['devices'] = EngineResult(
+        ok: true,
+        data: <dynamic>[
+          <String, dynamic>{'serial': udid, 'connection_type': 'USB'},
+          <String, dynamic>{'serial': other, 'connection_type': 'USB'},
+        ],
+      );
+      runner.results['pairing'] = EngineResult(
+        ok: true,
+        data: pairingPayload(),
+      );
+      picker.pairingToOpen = r'C:\pairingFile.plist';
+      final SettingsViewModel model = await load();
+      expect(devices!.selectedUdid, udid);
+      picker.whilePickingPairing = () async {
+        devices!.select(other);
+      };
+
+      await model.importPairing();
+
+      expect(importedFor(udid), isTrue);
+      expect(importedFor(other), isFalse);
+    });
+
+    test('import for a phone that dropped out while the picker was open files '
+        'nothing, for it or any other', () async {
+      runner.queued['devices'] = <EngineResult>[
+        EngineResult(
+          ok: true,
+          data: <dynamic>[
+            <String, dynamic>{'serial': udid, 'connection_type': 'USB'},
+            <String, dynamic>{'serial': other, 'connection_type': 'USB'},
+          ],
+        ),
+      ];
+      runner.results['devices'] = EngineResult(
+        ok: true,
+        data: <dynamic>[
+          <String, dynamic>{'serial': other, 'connection_type': 'USB'},
+        ],
+      );
+      runner.results['pairing'] = EngineResult(
+        ok: true,
+        data: pairingPayload(),
+      );
+      picker.pairingToOpen = r'C:\pairingFile.plist';
+      final SettingsViewModel model = await load();
+      expect(devices!.selectedUdid, udid);
+      picker.whilePickingPairing = () => devices!.refresh();
+
+      await model.importPairing();
+
+      expect(
+        runner.calls.any(
+          (List<String> call) => call.length >= 2 && call[1] == '--import',
+        ),
+        isFalse,
+      );
+      expect(model.pairingMessage, DeviceSelection.targetGoneMessage);
+      expect(model.isPairingMessageError, isTrue);
+    });
+
+    test('export reads the record of the phone clicked for, even if the '
+        'selection moves while the save dialog is open', () async {
+      runner.results['devices'] = EngineResult(
+        ok: true,
+        data: <dynamic>[
+          <String, dynamic>{'serial': udid, 'connection_type': 'USB'},
+          <String, dynamic>{'serial': other, 'connection_type': 'USB'},
+        ],
+      );
+      runner.results['pairing'] = EngineResult(
+        ok: true,
+        data: pairingPayload(hasRppairing: true),
+      );
+      picker.pairingToSave = r'D:\pairingFile.plist';
+      final SettingsViewModel model = await load();
+      expect(devices!.selectedUdid, udid);
+      picker.whilePickingPairing = () async {
+        devices!.select(other);
+      };
+
+      await model.exportPairing();
+
+      final List<String> argv = runner.calls.firstWhere(
+        (List<String> call) => call.contains('--export'),
+      );
+      expect(argv[argv.indexOf('--udid') + 1], udid);
+    });
+
+    test('export for a phone that dropped out while the save dialog was open '
+        'writes nothing', () async {
+      runner.queued['devices'] = <EngineResult>[
+        EngineResult(
+          ok: true,
+          data: <dynamic>[
+            <String, dynamic>{'serial': udid, 'connection_type': 'USB'},
+            <String, dynamic>{'serial': other, 'connection_type': 'USB'},
+          ],
+        ),
+      ];
+      runner.results['devices'] = EngineResult(
+        ok: true,
+        data: <dynamic>[
+          <String, dynamic>{'serial': other, 'connection_type': 'USB'},
+        ],
+      );
+      runner.results['pairing'] = EngineResult(
+        ok: true,
+        data: pairingPayload(hasRppairing: true),
+      );
+      picker.pairingToSave = r'D:\pairingFile.plist';
+      final SettingsViewModel model = await load();
+      expect(devices!.selectedUdid, udid);
+      picker.whilePickingPairing = () => devices!.refresh();
+
+      await model.exportPairing();
+
+      expect(
+        runner.calls.any((List<String> call) => call.contains('--export')),
+        isFalse,
+      );
+      expect(model.pairingMessage, DeviceSelection.targetGoneMessage);
+      expect(model.isPairingMessageError, isTrue);
     });
 
     test('export writes to the path the save dialog returned', () async {

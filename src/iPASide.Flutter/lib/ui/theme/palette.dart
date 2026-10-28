@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 /// switch re-resolves (and can animate) every surface at once.
 ///
 /// Values mirror the previous Avalonia `Palette.axaml`. The single restrained
-/// indigo accent (#5E6AD2 family) is used everywhere; the indigo→violet
-/// gradient is reserved for the primary action and the logo mark.
+/// blue accent (#2F7BFF family, the logo mark's accent) is used everywhere;
+/// its same-hue gradient is reserved for the primary action.
 @immutable
 class AppPalette extends ThemeExtension<AppPalette> {
   const AppPalette({
@@ -175,15 +175,15 @@ class AppPalette extends ThemeExtension<AppPalette> {
     textPrimary: Color(0xFFEDEDEF),
     textSecondary: Color(0xFF9C9CA6),
     textMuted: Color(0xFF6B6B76),
-    accent: Color(0xFF5E6AD2),
-    accentHover: Color(0xFF6D78DB),
-    accentPressed: Color(0xFF4F5AC2),
-    accentSubtle: Color(0x265E6AD2),
-    accentSelection: Color(0x4D5E6AD2),
-    accentDisabled: Color(0x665E6AD2),
+    accent: Color(0xFF2F7BFF),
+    accentHover: Color(0xFF4A8CFF),
+    accentPressed: Color(0xFF2569E6),
+    accentSubtle: Color(0x262F7BFF),
+    accentSelection: Color(0x4D2F7BFF),
+    accentDisabled: Color(0x662F7BFF),
     onAccent: Color(0xFFFFFFFF),
     onAccentMuted: Color(0x99FFFFFF),
-    focusRing: Color(0xFF7D88E0),
+    focusRing: Color(0xFF5A9BFF),
     cardBorder: Color(0xFF2C2C37),
     cardBorderHover: Color(0xFF3A3A46),
     success: Color(0xFF4CC38A),
@@ -199,9 +199,9 @@ class AppPalette extends ThemeExtension<AppPalette> {
     sidebarBgStops: [Color(0xFF101016), Color(0xFF0A0A0E)],
     cardBgStops: [Color(0xFF1B1B23), Color(0xFF141419)],
     cardHoverBgStops: [Color(0xFF212129), Color(0xFF18181E)],
-    accentGradientStops: [Color(0xFF6672E6), Color(0xFF8C5CF0)],
-    accentGradientHoverStops: [Color(0xFF7883EF), Color(0xFF9C6DFB)],
-    heroBgStops: [Color(0xFF262750), Color(0xFF191A2A), Color(0xFF141419)],
+    accentGradientStops: [Color(0xFF2A6EF0), Color(0xFF2060DC)],
+    accentGradientHoverStops: [Color(0xFF2A6EF0), Color(0xFF2569E6)],
+    heroBgStops: [Color(0xFF1C2B4D), Color(0xFF171B28), Color(0xFF141419)],
     heroStops: [0.0, 0.6, 1.0],
     cardShadow: [
       BoxShadow(color: Color(0x59000000), blurRadius: 16, offset: Offset(0, 4), spreadRadius: -4),
@@ -210,7 +210,7 @@ class AppPalette extends ThemeExtension<AppPalette> {
       BoxShadow(color: Color(0x6E000000), blurRadius: 30, offset: Offset(0, 10), spreadRadius: -6),
     ],
     accentGlow: [
-      BoxShadow(color: Color(0x6E6672E6), blurRadius: 22, offset: Offset(0, 6), spreadRadius: -4),
+      BoxShadow(color: Color(0x6E2F7BFF), blurRadius: 22, offset: Offset(0, 6), spreadRadius: -4),
       BoxShadow(color: Color(0x40000000), blurRadius: 3, offset: Offset(0, 1)),
     ],
   );
@@ -231,15 +231,15 @@ class AppPalette extends ThemeExtension<AppPalette> {
     textPrimary: Color(0xFF1C1C21),
     textSecondary: Color(0xFF6E6E78),
     textMuted: Color(0xFF9A9AA3),
-    accent: Color(0xFF5E6AD2),
-    accentHover: Color(0xFF4F5BC4),
-    accentPressed: Color(0xFF4450B2),
-    accentSubtle: Color(0x1A5E6AD2),
-    accentSelection: Color(0x405E6AD2),
-    accentDisabled: Color(0x665E6AD2),
+    accent: Color(0xFF1F5FD6),
+    accentHover: Color(0xFF1B54C0),
+    accentPressed: Color(0xFF17489F),
+    accentSubtle: Color(0x1A1F5FD6),
+    accentSelection: Color(0x401F5FD6),
+    accentDisabled: Color(0x661F5FD6),
     onAccent: Color(0xFFFFFFFF),
     onAccentMuted: Color(0xB3FFFFFF),
-    focusRing: Color(0xFF5E6AD2),
+    focusRing: Color(0xFF1F5FD6),
     cardBorder: Color(0xFFE4E4EA),
     cardBorderHover: Color(0xFFD2D2DC),
     success: Color(0xFF18794E),
@@ -255,9 +255,9 @@ class AppPalette extends ThemeExtension<AppPalette> {
     sidebarBgStops: [Color(0xFFF6F6F9), Color(0xFFEFEFF3)],
     cardBgStops: [Color(0xFFFFFFFF), Color(0xFFFBFBFD)],
     cardHoverBgStops: [Color(0xFFFFFFFF), Color(0xFFF6F6FA)],
-    accentGradientStops: [Color(0xFF5E6AD2), Color(0xFF8257E0)],
-    accentGradientHoverStops: [Color(0xFF5460C6), Color(0xFF754BD4)],
-    heroBgStops: [Color(0xFFE9EAFB), Color(0xFFF4F4FA), Color(0xFFFFFFFF)],
+    accentGradientStops: [Color(0xFF2A6EF0), Color(0xFF2060DC)],
+    accentGradientHoverStops: [Color(0xFF2569E6), Color(0xFF1F5CCC)],
+    heroBgStops: [Color(0xFFE6F0FF), Color(0xFFF3F7FD), Color(0xFFFFFFFF)],
     heroStops: [0.0, 0.7, 1.0],
     cardShadow: [
       BoxShadow(color: Color(0x14000000), blurRadius: 14, offset: Offset(0, 3), spreadRadius: -4),
@@ -266,7 +266,7 @@ class AppPalette extends ThemeExtension<AppPalette> {
       BoxShadow(color: Color(0x24000000), blurRadius: 26, offset: Offset(0, 10), spreadRadius: -8),
     ],
     accentGlow: [
-      BoxShadow(color: Color(0x455E6AD2), blurRadius: 20, offset: Offset(0, 6), spreadRadius: -5),
+      BoxShadow(color: Color(0x452F7BFF), blurRadius: 20, offset: Offset(0, 6), spreadRadius: -5),
       BoxShadow(color: Color(0x14000000), blurRadius: 3, offset: Offset(0, 1)),
     ],
   );

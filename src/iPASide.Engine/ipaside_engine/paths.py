@@ -158,6 +158,11 @@ def installs_file() -> Path:
     return data_dir() / "sideloads.json"
 
 
+def wifi_devices_file() -> Path:
+    """Phones seen paired over USB, with the Wi-Fi MAC that finds them on the LAN."""
+    return data_dir() / "wifi-devices.json"
+
+
 def tweaks_dir() -> Path:
     """Cache of dylibs extracted from .deb tweak packages, ready to inject."""
     path = data_dir() / "tweaks"

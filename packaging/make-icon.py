@@ -1,10 +1,10 @@
-"""Build the iPASide icon set from the approved brand artwork.
+"""Build the EZSide icon set from the approved brand artwork.
 
-The artwork is used exactly as approved: the tile is cropped out of the source
-render and given clean alpha via a rounded-rectangle mask matched to its own
-corner radius. The mask is supersampled and inset a hair so none of the source's
-dark backdrop survives in the antialiased edge, which would otherwise show as a
-grey fringe on light surfaces.
+The source is packaging/brand/mark-source.png, a 1024px render of
+packaging/brand/mark-source.svg with transparent corners; its alpha is used as is.
+An opaque source (a tile on a near-black backdrop) still works: the tile is cropped
+out and given clean alpha via a rounded-rectangle mask matched to its own corner
+radius, supersampled and inset a hair so no backdrop survives in the edge.
 
 It also cuts the app's UI artwork at the exact sizes the UI draws, one set per
 logical size and per device pixel ratio. That matters: handing Flutter the 512px
@@ -14,6 +14,9 @@ Lanczos. Scaling here instead means Flutter only ever draws these 1:1.
 
 Usage:
     python packaging/make-icon.py <source.png> <out.ico> [<master.png>] [<ui-dir>]
+
+The 16px ico frame comes from `<source stem>-16.png` beside the source when present;
+re-render it (from mark-source-16.svg) whenever the main source changes.
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ from PIL import Image, ImageDraw
 SIZES = [16, 20, 24, 32, 40, 48, 64, 128, 256]
 
 BACKDROP_MAX = 45      # the source sits on a near-black backdrop
-BACKDROP_SPREAD = 14   # ...which is neutral, unlike the blue-violet tile
+BACKDROP_SPREAD = 14   # ...which is neutral, unlike a coloured tile
 EDGE_INSET = 2.0       # trims the source's antialiased edge
 MASK_SUPERSAMPLE = 4
 
@@ -67,7 +70,10 @@ def _corner_radius(img: Image.Image, bounds: tuple[int, int, int, int]) -> float
 
 def extract_master(source: Path) -> Image.Image:
     """Crop the tile and give it clean, fringe-free alpha."""
-    img = Image.open(source).convert("RGB")
+    img = Image.open(source)
+    if img.mode == "RGBA" and img.getextrema()[3][0] == 0:
+        return img  # already a clean, transparent-cornered render
+    img = img.convert("RGB")
     left, top, right, bottom = _tile_bounds(img)
     radius = _corner_radius(img, (left, top, right, bottom))
 
@@ -126,6 +132,11 @@ def main() -> int:
 
     master = extract_master(source)
     frames = [master.resize((n, n), Image.Resampling.LANCZOS) for n in SIZES]
+    # At 16px the chevron and the Dynamic Island blur into mush, so that one frame
+    # comes from a simplified render beside the source when there is one.
+    small = source.with_name(f"{source.stem}-16.png")
+    if small.exists():
+        frames[0] = extract_master(small).resize((16, 16), Image.Resampling.LANCZOS)
     frames[-1].save(
         ico_path,
         format="ICO",

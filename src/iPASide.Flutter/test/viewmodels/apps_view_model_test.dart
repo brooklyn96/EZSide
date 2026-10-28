@@ -74,6 +74,9 @@ class _FakeDialogs extends DialogService {
   final List<_ConfirmCall> confirms = <_ConfirmCall>[];
   final List<_AlertCall> alerts = <_AlertCall>[];
 
+  /// Runs while the dialog is "open", before it answers.
+  Future<void> Function()? whileConfirming;
+
   @override
   Future<bool> confirm({
     required String title,
@@ -89,6 +92,7 @@ class _FakeDialogs extends DialogService {
       cancelLabel: cancelLabel,
       danger: danger,
     ));
+    await whileConfirming?.call();
     return answer;
   }
 
@@ -174,6 +178,37 @@ Future<DeviceSelection> _twoDevices() async {
   );
   addTearDown(selection.dispose);
   await selection.refresh();
+  await pumpEventQueue();
+  return selection;
+}
+
+/// Two phones with [_second] selected, over their own transport; every listing
+/// after the first holds only [later].
+Future<DeviceSelection> _secondSelected({
+  List<String> later = const <String>[_first, _second],
+}) async {
+  final _FakeRunner runner = _FakeRunner()
+    ..next(
+      'devices',
+      _ok(<dynamic>[
+        <String, dynamic>{'serial': _first, 'connection_type': 'USB'},
+        <String, dynamic>{'serial': _second, 'connection_type': 'Network'},
+      ]),
+    )
+    ..always(
+      'devices',
+      _ok(<dynamic>[
+        for (final String udid in later)
+          <String, dynamic>{'serial': udid, 'connection_type': 'USB'},
+      ]),
+    );
+  final DeviceSelection selection = DeviceSelection(
+    engine: EngineApi(runner),
+    settings: _FakeSettings(),
+  );
+  addTearDown(selection.dispose);
+  await selection.refresh();
+  selection.select(_second);
   await pumpEventQueue();
   return selection;
 }
@@ -498,6 +533,74 @@ void main() {
         runner.callsTo('uninstall').single,
         <String>['uninstall', 'com.a', '--udid', 'BBBB2222'],
       );
+    });
+
+    test('uninstalls from the phone whose list was shown, even if the '
+        'selection moves while the dialog is open', () async {
+      final DeviceSelection devices = await _secondSelected();
+      final _FakeRunner runner = _FakeRunner()
+        ..always('apps', _ok(<String, dynamic>{'com.a': _app(name: 'A')}));
+      final _FakeDialogs dialogs = _FakeDialogs()
+        ..whileConfirming = () async {
+          devices.select(_first);
+        };
+      final AppsViewModel vm =
+          await _loaded(runner, dialogs, devices: devices);
+
+      await vm.uninstallRow(vm.rows.single);
+
+      expect(
+        runner.callsTo('uninstall').single,
+        <String>['uninstall', 'com.a', '--udid', _second],
+      );
+    });
+
+    test('a phone that drops out while the dialog is open loses nothing, and '
+        'neither does any other', () async {
+      final DeviceSelection devices =
+          await _secondSelected(later: const <String>[_first]);
+      final _FakeRunner runner = _FakeRunner()
+        ..always('apps', _ok(<String, dynamic>{'com.a': _app(name: 'A')}));
+      final _FakeDialogs dialogs = _FakeDialogs()
+        ..whileConfirming = devices.refresh;
+      final AppsViewModel vm =
+          await _loaded(runner, dialogs, devices: devices);
+
+      final AppRow row = vm.rows.single;
+      await vm.uninstallRow(row);
+
+      expect(runner.callsTo('uninstall'), isEmpty);
+      expect(dialogs.alerts.single.message, DeviceSelection.targetGoneMessage);
+      expect(row.isRemoving, isFalse);
+    });
+
+    test('a list shown after a failed listing uninstalls from no phone once '
+        'phones are listed', () async {
+      final _FakeRunner selectionRunner = _FakeRunner()
+        ..next('devices', _failed('usbmux is not answering'))
+        ..always(
+          'devices',
+          _ok(<dynamic>[
+            <String, dynamic>{'serial': _first, 'connection_type': 'USB'},
+          ]),
+        );
+      final DeviceSelection devices = DeviceSelection(
+        engine: EngineApi(selectionRunner),
+        settings: _FakeSettings(),
+      );
+      addTearDown(devices.dispose);
+      final _FakeRunner runner = _FakeRunner()
+        ..always('apps', _ok(<String, dynamic>{'com.a': _app(name: 'A')}));
+      final _FakeDialogs dialogs = _FakeDialogs()
+        ..whileConfirming = devices.refresh;
+      final AppsViewModel vm =
+          await _loaded(runner, dialogs, devices: devices);
+      expect(devices.hasError, isTrue);
+
+      await vm.uninstallRow(vm.rows.single);
+
+      expect(runner.callsTo('uninstall'), isEmpty);
+      expect(dialogs.alerts.single.message, DeviceSelection.targetGoneMessage);
     });
 
     test('reloads when the selection moves to another phone', () async {

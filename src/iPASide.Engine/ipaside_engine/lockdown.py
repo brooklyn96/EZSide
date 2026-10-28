@@ -7,6 +7,7 @@ connection-selection policy: prefer USB, fall back to network.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any
 
@@ -38,7 +39,9 @@ def preferred_connection() -> str | None:
     )
 
 
-async def create(serial: str | None = None, prefer_usb: bool = True) -> Any:
+async def create(
+    serial: str | None = None, prefer_usb: bool = True, allow_wifi_direct: bool = True
+) -> Any:
     """Open a lockdown client for a device.
 
     ``serial`` selects a specific UDID; ``None`` means "the connected device", which
@@ -49,10 +52,15 @@ async def create(serial: str | None = None, prefer_usb: bool = True) -> Any:
 
     When ``prefer_usb`` is set we try USB first (more reliable for installs)
     and transparently fall back to any transport (e.g. Wi-Fi) if USB is absent.
+
+    When usbmux cannot reach a phone that was once seen paired over USB, it is looked
+    for on the LAN and opened over TCP (``wifi_direct``), unless USB was forced: AMDS
+    misses Wi-Fi phones wherever multicast is filtered. ``allow_wifi_direct=False``
+    keeps a caller (pairing) on usbmux.
     """
     from pymobiledevice3.lockdown import create_using_usbmux
 
-    from . import device  # deferred: device imports this module at load time
+    from . import device, wifi_direct  # deferred: device imports this module at load time
 
     serial = await device.resolve_serial_async(serial)
     forced = preferred_connection()
@@ -72,7 +80,7 @@ async def create(serial: str | None = None, prefer_usb: bool = True) -> Any:
     last: Exception | None = None
     for connection_type in attempts:
         try:
-            return await maybe_await(
+            client = await maybe_await(
                 create_using_usbmux(
                     serial=serial,
                     connection_type=connection_type,
@@ -81,7 +89,30 @@ async def create(serial: str | None = None, prefer_usb: bool = True) -> Any:
             )
         except Exception as exc:  # this transport is unavailable - try the next
             last = exc
-    raise device.DeviceError(_unreachable(serial, last, forced)) from last
+            continue
+        if connection_type == "USB" and getattr(client, "paired", False):
+            await _remember(serial, client)
+        return client
+    message = _unreachable(serial, last, forced)
+    if allow_wifi_direct and forced != "USB" and wifi_direct.is_remembered(serial):
+        try:
+            return await wifi_direct.connect(serial)
+        except Exception as exc:  # the usbmux failure stays the headline: it names the fix
+            message += f" Wi-Fi direct was also tried: {exc}"
+    raise device.DeviceError(message) from last
+
+
+async def _remember(serial: str, client: Any) -> None:
+    """Note a phone reached paired over USB for Wi-Fi direct; never fails the connection."""
+    from . import wifi_direct
+
+    try:
+        values = await all_values(client)
+        await asyncio.to_thread(
+            wifi_direct.remember, serial, values.get("WiFiAddress"), values.get("DeviceName")
+        )
+    except Exception:
+        pass  # remember logs its own trouble; this connection is fine either way
 
 
 async def probe(serial: str) -> None:

@@ -306,8 +306,19 @@ class SettingsViewModel extends BaseViewModel {
 
   Future<void> importPairing() async {
     if (!canImportPairing) return;
+    // The phone the user clicked Import for, read before the picker: the
+    // selection can move while it is open, and the record must not be filed for
+    // another phone.
+    final String? udid = _devices.selectedUdid;
+    final bool wasEmpty = _devices.isEmpty;
     final String? path = await _picker.pickPairingFile();
     if (path == null || isDisposed) return;
+
+    if (_devices.isTargetGone(udid, wasEmpty: wasEmpty)) {
+      _setPairingMessage(DeviceSelection.targetGoneMessage, isError: true);
+      notify();
+      return;
+    }
 
     _isPairingBusy = true;
     _setPairingMessage('');
@@ -315,7 +326,7 @@ class SettingsViewModel extends BaseViewModel {
     try {
       final PairingImport result = await _engine.importPairing(
         path,
-        udid: _devices.selectedUdid,
+        udid: udid,
         connection: _devices.connectionArg,
       );
       if (isDisposed) return;
@@ -342,10 +353,20 @@ class SettingsViewModel extends BaseViewModel {
 
   Future<void> exportPairing() async {
     if (!canExportPairing) return;
+    // The phone the user clicked Export for, read before the picker, for the
+    // same reason as in importPairing.
+    final String? udid = _devices.selectedUdid;
+    final bool wasEmpty = _devices.isEmpty;
     final String? path = await _picker.savePairingFile(
       suggestedName: 'pairingFile.plist',
     );
     if (path == null || isDisposed) return;
+
+    if (_devices.isTargetGone(udid, wasEmpty: wasEmpty)) {
+      _setPairingMessage(DeviceSelection.targetGoneMessage, isError: true);
+      notify();
+      return;
+    }
 
     _isPairingBusy = true;
     _setPairingMessage('');
@@ -353,7 +374,7 @@ class SettingsViewModel extends BaseViewModel {
     try {
       final PairingExport result = await _engine.exportPairing(
         path,
-        udid: _devices.selectedUdid,
+        udid: udid,
         connection: _devices.connectionArg,
       );
       if (isDisposed) return;

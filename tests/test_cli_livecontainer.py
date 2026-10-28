@@ -62,7 +62,8 @@ def boundaries(monkeypatch, tmp_path):
         },
     )
 
-    # The device.
+    # The device. The CLI picks the target once, before any phone call.
+    monkeypatch.setattr(cli.device, "resolve_serial", lambda serial=None: serial or "UDID-1")
     monkeypatch.setattr(
         livecontainer,
         "status",

@@ -7,12 +7,13 @@ show a live progress bar.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import sys
 from pathlib import Path
 from typing import Any, Callable
 
-from . import lockdown
+from . import lockdown, wifi_direct
 from ._asyncutil import maybe_await, run
 from .errors import EngineError
 
@@ -42,6 +43,7 @@ async def _list_installed_async(serial: str | None, app_type: str) -> dict[str, 
     return result
 
 
+@wifi_direct.wifi_operation(cap=120, retry=True)
 def list_installed(serial: str | None = None, app_type: str = "User") -> dict[str, Any]:
     """List installed apps. ``app_type`` is ``User``, ``System``, or ``Any``."""
     return run(_list_installed_async(serial, app_type))
@@ -86,6 +88,7 @@ async def _icons_async(
         await lockdown.close(client)
 
 
+@wifi_direct.wifi_operation(cap=120, retry=True)
 def icons(
     bundle_ids: list[str] | None = None,
     serial: str | None = None,
@@ -149,15 +152,37 @@ async def _install_async(
                             })
                 finally:
                     await afc.fclose(handle)
-                # Phase 2 - installd extracts/verifies/installs, reporting each sub-step.
-                try:
-                    await _watch_install(proxy, remote, report)
-                finally:
-                    await afc.rm_single(remote, force=True)
+            # Phase 2 - installd extracts/verifies/installs, reporting each sub-step. AFC
+            # is closed first: its reader keeps a read pending with nothing asked, which
+            # over Wi-Fi direct would trip the idle-read deadline during a long install.
+            try:
+                await _watch_install(proxy, remote, report)
+            finally:
+                await _remove_upload(client, remote)
         finally:
             await maybe_await(proxy.close())
     finally:
         await lockdown.close(client)
+
+
+async def _remove_upload(client: Any, remote: str) -> None:
+    """Delete the uploaded IPA over a fresh AFC connection: best effort, bounded.
+
+    The install itself is already decided (done, or its own error is the news), so a
+    cleanup that fails or hangs - a phone that just left Wi-Fi - is never an error.
+    """
+    from pymobiledevice3.services.afc import AfcService
+
+    async def remove() -> None:
+        async with AfcService(client) as afc:
+            await afc.rm_single(remote, force=True)
+
+    try:
+        await asyncio.wait_for(remove(), wifi_direct.STEP_TIMEOUT)
+    except Exception as exc:  # noqa: BLE001 - includes TimeoutError; cancellation still propagates
+        # The real stderr: under ``serve`` sys.stderr turns lines into progress frames.
+        print(f"Could not remove the uploaded IPA from the device: {exc!r}",
+              file=sys.__stderr__ or sys.stderr, flush=True)
 
 
 class InstallLimitError(EngineError):
@@ -243,6 +268,7 @@ async def _watch_install(proxy: Any, remote_path: str, report: ProgressCallback)
     raise AppInstallError("installd closed the connection before completing the install")
 
 
+@wifi_direct.wifi_operation(cap=1800, retry=True)
 def install(
     ipa_path: str, serial: str | None = None, progress: ProgressCallback | None = None
 ) -> None:
@@ -264,6 +290,7 @@ async def _uninstall_async(bundle_id: str, serial: str | None) -> None:
         await lockdown.close(client)
 
 
+@wifi_direct.wifi_operation(cap=120, retry=False)
 def uninstall(bundle_id: str, serial: str | None = None) -> None:
     """Uninstall an app by bundle identifier."""
     return run(_uninstall_async(bundle_id, serial))
@@ -325,6 +352,7 @@ async def _install_profile_async(profile: bytes, serial: str | None) -> str:
     return uuid
 
 
+@wifi_direct.wifi_operation(cap=120, retry=True)
 def install_profile(profile: bytes, serial: str | None = None) -> str:
     """Install a provisioning profile on the device and return its UUID.
 

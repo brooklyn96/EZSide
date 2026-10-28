@@ -334,7 +334,7 @@ class _Chip extends StatelessWidget {
         child: Text(
           label,
           style: selected
-              ? context.t.semi(FontSizes.small).copyWith(color: p.accent)
+              ? context.t.semi(FontSizes.small).copyWith(color: p.focusRing)
               : context.t.small,
         ),
       ),

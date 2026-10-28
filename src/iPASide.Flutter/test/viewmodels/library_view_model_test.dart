@@ -26,6 +26,9 @@ class _FakeRunner with EngineCommandRunner {
   /// Parks each answer until completed, so a mid-flight state can be asserted.
   Completer<void>? hold;
 
+  /// Runs when `forget` is called, before it answers.
+  Future<void> Function()? onForget;
+
   /// Answers every unscripted call of [command] with [outcome].
   void always(String command, Object outcome) => _defaults[command] = outcome;
 
@@ -53,6 +56,7 @@ class _FakeRunner with EngineCommandRunner {
     }
 
     await hold?.future;
+    if (command == 'forget') await onForget?.call();
 
     final Queue<Object>? queued = _scripted[command];
     final Object outcome = queued != null && queued.isNotEmpty
@@ -86,6 +90,9 @@ class _FakeDialogs extends DialogService {
   final List<_ConfirmCall> confirms = <_ConfirmCall>[];
   final List<_AlertCall> alerts = <_AlertCall>[];
 
+  /// Runs while the dialog is "open", before it answers.
+  Future<void> Function()? whileConfirming;
+
   @override
   Future<bool> confirm({
     required String title,
@@ -101,6 +108,7 @@ class _FakeDialogs extends DialogService {
       cancelLabel: cancelLabel,
       danger: danger,
     ));
+    await whileConfirming?.call();
     return answer;
   }
 
@@ -197,6 +205,36 @@ Future<DeviceSelection> _device(String udid) async {
   );
   addTearDown(selection.dispose);
   await selection.refresh();
+  return selection;
+}
+
+/// Two phones with BBBB2222 selected, over their own transport; every listing
+/// after the first holds only [later].
+Future<DeviceSelection> _bSelected({
+  List<String> later = const <String>['AAAA1111', 'BBBB2222'],
+}) async {
+  final _FakeRunner runner = _FakeRunner()
+    ..next(
+      'devices',
+      _ok(<dynamic>[
+        <String, dynamic>{'serial': 'AAAA1111', 'connection_type': 'USB'},
+        <String, dynamic>{'serial': 'BBBB2222', 'connection_type': 'Network'},
+      ]),
+    )
+    ..always(
+      'devices',
+      _ok(<dynamic>[
+        for (final String udid in later)
+          <String, dynamic>{'serial': udid, 'connection_type': 'USB'},
+      ]),
+    );
+  final DeviceSelection selection = DeviceSelection(
+    engine: EngineApi(runner),
+    settings: _FakeSettings(),
+  );
+  addTearDown(selection.dispose);
+  await selection.refresh();
+  selection.select('BBBB2222');
   return selection;
 }
 
@@ -851,6 +889,63 @@ void main() {
 
       runner.hold!.complete();
       await running;
+    });
+
+    test('a record naming no phone uninstalls from the one selected at the '
+        'click, even if the selection moves during the dialog', () async {
+      final DeviceSelection devices = await _bSelected();
+      final _FakeRunner runner = _FakeRunner()
+        ..always('installs', _ok(<dynamic>[_record(bundleId: 'com.a')]));
+      final _FakeDialogs dialogs = _FakeDialogs()
+        ..whileConfirming = () async {
+          devices.select('AAAA1111');
+        };
+      final LibraryViewModel vm =
+          await _loaded(runner, dialogs, devices: devices);
+
+      await vm.removeRow(vm.rows.single);
+
+      expect(
+        runner.callsTo('uninstall').single,
+        <String>['uninstall', 'com.a', '--udid', 'BBBB2222'],
+      );
+    });
+
+    test('a record naming no phone uninstalls from the one selected at the '
+        'click, even if the selection moves during forget', () async {
+      final DeviceSelection devices = await _bSelected();
+      final _FakeRunner runner = _FakeRunner()
+        ..always('installs', _ok(<dynamic>[_record(bundleId: 'com.a')]))
+        ..onForget = () async {
+          devices.select('AAAA1111');
+        };
+      final LibraryViewModel vm =
+          await _loaded(runner, _FakeDialogs(), devices: devices);
+
+      await vm.removeRow(vm.rows.single);
+
+      expect(
+        runner.callsTo('uninstall').single,
+        <String>['uninstall', 'com.a', '--udid', 'BBBB2222'],
+      );
+    });
+
+    test('a record naming no phone, whose clicked phone dropped out, '
+        'uninstalls from none but is still forgotten', () async {
+      final DeviceSelection devices =
+          await _bSelected(later: const <String>['AAAA1111']);
+      final _FakeRunner runner = _FakeRunner()
+        ..always('installs', _ok(<dynamic>[_record(bundleId: 'com.a')]))
+        ..onForget = devices.refresh;
+      final _FakeDialogs dialogs = _FakeDialogs();
+      final LibraryViewModel vm =
+          await _loaded(runner, dialogs, devices: devices);
+
+      await vm.removeRow(vm.rows.single);
+
+      expect(runner.callsTo('uninstall'), isEmpty);
+      expect(runner.callsTo('forget').single, <String>['forget', 'com.a']);
+      expect(dialogs.alerts.single.message, DeviceSelection.targetGoneMessage);
     });
 
     test('falls back to the selected device when the record names none', () async {

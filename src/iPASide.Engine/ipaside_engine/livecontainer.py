@@ -35,7 +35,7 @@ from typing import Any, Callable
 
 import requests
 
-from . import apps, ipa as ipa_module, lockdown, provision, refresh, signing
+from . import apps, device, ipa as ipa_module, lockdown, provision, refresh, signing, wifi_direct
 from .errors import EngineError
 
 #: LiveContainer's own identifier; the team id is appended for a free account.
@@ -271,6 +271,7 @@ def _import_request(bundle: dict[str, Any]) -> bytes:
     )
 
 
+@wifi_direct.wifi_operation(cap=120, retry=False)
 async def _write_documents(
     bundle_id: str,
     serial: str | None,
@@ -298,6 +299,7 @@ async def _write_documents(
     return written
 
 
+@wifi_direct.wifi_operation(cap=120, retry=False)
 async def _list_dir(bundle_id: str, serial: str | None, path: str) -> list[str]:
     """One directory listing from inside an app's container."""
     from pymobiledevice3.services.house_arrest import HouseArrestService
@@ -310,6 +312,7 @@ async def _list_dir(bundle_id: str, serial: str | None, path: str) -> list[str]:
         await lockdown.close(client)
 
 
+@wifi_direct.wifi_operation(cap=120, retry=False)
 async def _remove_tree(bundle_id: str, serial: str | None, path: str) -> None:
     """Remove a directory and everything under it, depth first.
 
@@ -340,6 +343,8 @@ async def _remove_recursive(service: Any, path: str) -> None:
     await service.rm_single(path)
 
 
+# A whole app bundle is a long upload, like an install: the install cap, not the short one.
+@wifi_direct.wifi_operation(cap=1800, retry=False)
 async def _push_bundle(
     bundle_id: str,
     serial: str | None,
@@ -627,6 +632,8 @@ def status(serial: str | None = None) -> dict[str, Any]:
     is expected to be there either way - it is left behind on purpose so a manual import
     is always possible - so it says nothing about whether setup finished.
     """
+    # One target for both calls below: the second never looks at the inventory again.
+    serial = device.resolve_serial(serial)
     installed = apps.list_installed(serial)
     entry = next(
         (
@@ -658,6 +665,7 @@ def status(serial: str | None = None) -> dict[str, Any]:
     }
 
 
+@wifi_direct.wifi_operation(cap=120, retry=False)
 async def _list_documents(bundle_id: str, serial: str | None) -> list[str]:
     from pymobiledevice3.services.house_arrest import HouseArrestService
 
