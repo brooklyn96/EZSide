@@ -4,7 +4,15 @@ All notable changes to iPASide are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and
 [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [1.2.0] - 2026-10-28
+
+### Changed
+
+- **EZSide has its own mark.** The app icon, installer art and brand images now show an iPhone
+  outline with Wi-Fi waves on its screen and a blue app tile sliding in from the left; the 16 px
+  icon is a simpler drawing that stays readable.
+- **The app accent moves from indigo to the mark's blue** (#2F7BFF in dark mode, #1F5FD6 in light
+  mode, where focused text now uses the focus-ring colour for contrast).
 
 ### Added
 
