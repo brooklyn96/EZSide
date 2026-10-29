@@ -491,48 +491,186 @@ class _AccountSection extends StatelessWidget {
   }
 }
 
-class _AnisetteSection extends StatelessWidget {
+/// Anisette: what makes the sign-in headers, and which services to try, in order.
+///
+/// The list is editable because a server you host yourself belongs in front of the public
+/// ones: while it is up it is the only one that sees your requests, and when it is asleep
+/// the public services behind it still answer. The engine validates and stores the
+/// addresses, so what the card shows afterwards is what it accepted, not what was typed.
+class _AnisetteSection extends StatefulWidget {
   const _AnisetteSection({required this.vm});
 
   final SettingsViewModel vm;
 
   @override
-  Widget build(BuildContext context) => SettingsSection(
-        label: 'ANISETTE',
-        children: [
-          if (vm.isAnisetteLoading)
-            const SettingsBlock(child: SettingsLoadingLine(label: '\u2026'))
-          else if (vm.hasAnisetteError)
-            SettingsBlock(
-              child: Text(vm.anisetteError!, style: context.t.bodyMuted),
-            )
-          else ...[
-            SettingsRow(
-              title: 'Provider',
-              control: SettingsValue(vm.anisetteProvider),
+  State<_AnisetteSection> createState() => _AnisetteSectionState();
+}
+
+class _AnisetteSectionState extends State<_AnisetteSection> {
+  final TextEditingController _controller = TextEditingController();
+
+  SettingsViewModel get _vm => widget.vm;
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _add() async {
+    final String address = _controller.text.trim();
+    if (address.isEmpty) return;
+    await _vm.addAnisetteServer(address);
+    if (mounted && _vm.anisetteSaveError == null) _controller.clear();
+  }
+
+  Widget _serverLine(String address, int index, int count) {
+    final palette = context.palette;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: Space.s1),
+      child: Row(
+        children: <Widget>[
+          SizedBox(
+            width: 20,
+            child: Text(
+              '${index + 1}.',
+              style: context.t.mono.copyWith(color: palette.textMuted),
             ),
-            if (vm.anisetteServers.isNotEmpty)
-              SettingsRow(
-                title: 'Services',
-                control: SettingsValue(vm.anisetteServers),
-              ),
-            SettingsRow(
-              title: 'State',
-              control: SettingsValue(vm.anisetteState),
+          ),
+          Expanded(
+            child: Text(
+              address,
+              style: context.t.mono.copyWith(fontSize: FontSizes.small),
+              overflow: TextOverflow.ellipsis,
             ),
-            if (vm.anisetteIsRemote)
-              SettingsBlock(
-                child: Text(
-                  'Apple only accepts anisette made by its own macOS libraries, so EZSide '
-                  'gets it from a public Mac service, as iloader, SideStore and xtool do. '
-                  'The service never receives your Apple ID, password, codes or tokens; it '
-                  'can see your IP address.',
-                  style: context.t.bodyMuted,
+          ),
+          GhostIconButton(
+            icon: Icons.arrow_upward,
+            tooltip: 'Try this one earlier',
+            onPressed: index == 0 ? null : () => _vm.moveAnisetteServer(index, -1),
+          ),
+          GhostIconButton(
+            icon: Icons.arrow_downward,
+            tooltip: 'Try this one later',
+            onPressed: index == count - 1 ? null : () => _vm.moveAnisetteServer(index, 1),
+          ),
+          GhostIconButton(
+            icon: Icons.close,
+            tooltip: 'Remove',
+            danger: true,
+            onPressed: () => _vm.removeAnisetteServerAt(index),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget get _editor {
+    final List<String> servers = _vm.anisetteServerList;
+    return SettingsRow(
+      title: 'Services',
+      description: 'Tried in order: the first that answers is the one used, so a server that '
+          'is asleep costs one timeout instead of the whole sign-in. Use https://, or http:// '
+          'to this PC only.',
+      control: SettingsValue(servers.isEmpty ? 'built-in' : '${servers.length}'),
+      detail: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          if (servers.isEmpty)
+            Text(
+              "The engine's built-in Mac services are used. Add one to put your own first.",
+              style: context.t.smallMuted,
+            ),
+          for (int i = 0; i < servers.length; i++)
+            _serverLine(servers[i], i, servers.length),
+          const SizedBox(height: Space.s3),
+          Row(
+            children: <Widget>[
+              Expanded(
+                child: AppTextField(
+                  controller: _controller,
+                  hint: 'https://ani.example.com, or http://127.0.0.1:6969',
+                  mono: true,
+                  onSubmitted: (_) => _add(),
                 ),
               ),
+              const SizedBox(width: Space.s2),
+              AppButton(
+                label: 'Add',
+                icon: Icons.add,
+                compact: true,
+                busy: _vm.isAnisetteSaving,
+                onPressed: _add,
+              ),
+            ],
+          ),
+          const SizedBox(height: Space.s2),
+          Wrap(
+            spacing: Space.s2,
+            runSpacing: Space.s2,
+            children: <Widget>[
+              AppButton(
+                label: 'Use this PC',
+                icon: Icons.computer,
+                compact: true,
+                onPressed: _vm.isAnisetteSaving
+                    ? null
+                    : () => _vm.addAnisetteServer('http://127.0.0.1:6969'),
+              ),
+              AppButton(
+                label: 'Reset to built-in',
+                icon: Icons.restart_alt,
+                compact: true,
+                busy: _vm.isAnisetteSaving,
+                onPressed: _vm.isAnisetteSaving ? null : _vm.resetAnisetteServers,
+              ),
+            ],
+          ),
+          if (_vm.anisetteSaveError case final String message) ...<Widget>[
+            const SizedBox(height: Space.s2),
+            SettingsStatusLine(text: message, isError: true),
           ],
         ],
-      );
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final SettingsViewModel vm = _vm;
+    return SettingsSection(
+      label: 'ANISETTE',
+      children: <Widget>[
+        if (vm.isAnisetteLoading)
+          const SettingsBlock(child: SettingsLoadingLine(label: '\u2026'))
+        else if (vm.hasAnisetteError)
+          SettingsBlock(
+            child: Text(vm.anisetteError!, style: context.t.bodyMuted),
+          )
+        else ...<Widget>[
+          SettingsRow(
+            title: 'Provider',
+            control: SettingsValue(vm.anisetteProvider),
+          ),
+          _editor,
+          SettingsRow(
+            title: 'State',
+            control: SettingsValue(vm.anisetteState),
+          ),
+          if (vm.anisetteIsRemote)
+            SettingsBlock(
+              child: Text(
+                'Apple only accepts anisette made by its own macOS libraries, so EZSide '
+                'gets it from a Mac service, as iloader, SideStore and xtool do. '
+                'The service never receives your Apple ID, password, codes or tokens; it '
+                'can see your IP address.',
+                style: context.t.bodyMuted,
+              ),
+            ),
+        ],
+      ],
+    );
+  }
 }
 
 /// Updates: check, download-and-verify, then install on the user's click.

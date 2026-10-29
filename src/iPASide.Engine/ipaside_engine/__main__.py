@@ -23,6 +23,7 @@ from . import (
     __version__,
     account,
     anisette,
+    anisette_remote,
     apple_support,
     apps,
     developer,
@@ -237,6 +238,18 @@ def _cmd_uninstall(args: argparse.Namespace) -> int:
 
 
 def _cmd_anisette(args: argparse.Namespace) -> int:
+    if args.set_servers is not None:
+        # Settings -> Anisette. Order is priority; an empty value restores the built-in list.
+        chosen = anisette_remote.save_servers(
+            [part for part in str(args.set_servers).split(",")]
+        )
+        if not chosen and not args.json:
+            print("Anisette server list cleared; the built-in servers are used again.")
+    if args.clear_servers:
+        anisette_remote.clear_servers()
+        if not args.json:
+            print("Anisette server list cleared; the built-in servers are used again.")
+
     if args.refresh:
         headers = anisette.get_headers()
         if args.json:
@@ -256,6 +269,11 @@ def _cmd_anisette(args: argparse.Namespace) -> int:
         print(f"Anisette package: {state['package_version'] or 'NOT INSTALLED'}")
         print(f"Provisioning state cached: {state['state_cached']}")
         print(f"  {state['state_path']}")
+        servers = state.get("servers") or []
+        if servers:
+            print("Services, in order:")
+            for index, server in enumerate(servers, start=1):
+                print(f"  {index}. {server}")
     return 0
 
 
@@ -1381,6 +1399,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ani_parser.add_argument(
         "--refresh", action="store_true", help="generate anisette headers (provisions on first use)"
+    )
+    ani_parser.add_argument(
+        "--set-servers",
+        metavar="URLS",
+        default=None,
+        help="comma-separated service URLs, first one first; empty restores the built-in list",
+    )
+    ani_parser.add_argument(
+        "--clear-servers",
+        action="store_true",
+        help="forget the saved service list and use the built-in servers again",
     )
 
     apple_parser = sub.add_parser(
