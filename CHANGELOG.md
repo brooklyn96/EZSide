@@ -4,6 +4,23 @@ All notable changes to iPASide are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- **The anisette service list is chosen in Settings.** Apple only accepts anisette made by its
+  own macOS libraries, so EZSide asks a remote Mac service for headers, and that list was fixed
+  in the engine. It is now editable: the services are stored in the data folder in priority
+  order, the first that answers is the one used, and the rest are the fallback. That is what
+  makes a self-hosted server practical — put it first and it is the only service that sees your
+  requests, while the public ones still answer when the machine hosting it is asleep. The
+  engine validates every address before saving it (https, or http to this PC only) and a
+  corrupt saved file falls back to the built-in list rather than failing sign-in. The list is
+  capped at eight: an entry that cannot be reached costs a timeout, so a longer list makes
+  sign-in slower rather than safer. The first service is marked `PRIMARY`, and the card says so
+  when that first service is a public host — whoever runs it can see your IP address and the
+  one-time passwords it hands out.
+
 ## [1.3.3] - 2026-10-29
 
 ### Fixed

@@ -596,6 +596,9 @@ class SettingsViewModel extends BaseViewModel {
   String _anisetteState = '';
   String _anisetteServers = '';
   bool _anisetteIsRemote = false;
+  List<String> _anisetteServerList = const <String>[];
+  bool _anisetteSaving = false;
+  String? _anisetteSaveError;
 
   bool get isAnisetteLoading => _isAnisetteLoading;
   String? get anisetteError => _anisetteError;
@@ -608,11 +611,92 @@ class SettingsViewModel extends BaseViewModel {
   /// The anisette services tried in order, as host names, or empty for the local emulator.
   String get anisetteServers => _anisetteServers;
 
+  /// The exact service URLs the engine would try, in priority order. The editor edits these,
+  /// because a host name cannot be saved back — the scheme is what makes it reachable.
+  List<String> get anisetteServerList => _anisetteServerList;
+
+  /// True while a change to the list is being saved.
+  bool get isAnisetteSaving => _anisetteSaving;
+
+  /// Why the last change did not save, e.g. an address the engine would not accept.
+  String? get anisetteSaveError => _anisetteSaveError;
+
   /// True when anisette comes from a remote service, so the privacy note is shown.
   bool get anisetteIsRemote => _anisetteIsRemote;
 
   /// `provisioned` once state is cached on disk, otherwise `first-use`.
   String get anisetteState => _anisetteState;
+
+  /// Adds a service to the end of the list and saves. The address is checked by the engine, so
+  /// the message the user sees is the engine's, not a second opinion from the app.
+  Future<void> addAnisetteServer(String address) =>
+      _saveAnisetteServers(<String>[..._anisetteServerList, address]);
+
+  /// Removes the service at [index] and saves. Removing the last one restores the built-ins.
+  Future<void> removeAnisetteServerAt(int index) {
+    if (index < 0 || index >= _anisetteServerList.length) return Future<void>.value();
+    final next = <String>[..._anisetteServerList]..removeAt(index);
+    return _saveAnisetteServers(next);
+  }
+
+  /// Moves the service at [index] earlier or later, which changes what is tried first.
+  Future<void> moveAnisetteServer(int index, int delta) {
+    final target = index + delta;
+    if (index < 0 || index >= _anisetteServerList.length) return Future<void>.value();
+    if (target < 0 || target >= _anisetteServerList.length) return Future<void>.value();
+    final next = <String>[..._anisetteServerList];
+    final moved = next.removeAt(index);
+    next.insert(target, moved);
+    return _saveAnisetteServers(next);
+  }
+
+  /// Goes back to the engine's built-in servers.
+  Future<void> resetAnisetteServers() async {
+    _anisetteSaving = true;
+    _anisetteSaveError = null;
+    notify();
+    try {
+      final status = await _engine.clearAnisetteServers();
+      _applyAnisetteStatus(status);
+    } catch (error) {
+      if (!BaseViewModel.isShutdown(error)) {
+        _anisetteSaveError = BaseViewModel.errorText(error);
+      }
+    } finally {
+      _anisetteSaving = false;
+      notify();
+    }
+  }
+
+  Future<void> _saveAnisetteServers(List<String> servers) async {
+    _anisetteSaving = true;
+    _anisetteSaveError = null;
+    notify();
+    try {
+      final status = await _engine.setAnisetteServers(servers);
+      _applyAnisetteStatus(status);
+    } catch (error) {
+      if (!BaseViewModel.isShutdown(error)) {
+        _anisetteSaveError = BaseViewModel.errorText(error);
+      }
+    } finally {
+      _anisetteSaving = false;
+      notify();
+    }
+  }
+
+  void _applyAnisetteStatus(AnisetteStatus status) {
+    _anisetteIsRemote = status.provider == 'remote';
+    _anisetteProvider =
+        _anisetteIsRemote ? 'Remote Mac service' : 'anisette ${status.packageVersion ?? '?'}';
+    _anisetteServerList = List<String>.unmodifiable(status.servers);
+    _anisetteServers = status.servers
+        .map((String s) => Uri.tryParse(s)?.host ?? s)
+        .where((String host) => host.isNotEmpty)
+        .join(', ');
+    _anisetteState = status.stateCached ? 'provisioned' : 'first-use';
+    _anisetteError = null;
+  }
 
   // ---- About card ----
 
@@ -671,15 +755,7 @@ class SettingsViewModel extends BaseViewModel {
   Future<void> _loadAnisette() async {
     try {
       final status = await _engine.anisette();
-      _anisetteIsRemote = status.provider == 'remote';
-      _anisetteProvider = _anisetteIsRemote
-          ? 'Remote Mac service'
-          : 'anisette ${status.packageVersion ?? '?'}';
-      _anisetteServers = status.servers
-          .map((String s) => Uri.tryParse(s)?.host ?? s)
-          .where((String host) => host.isNotEmpty)
-          .join(', ');
-      _anisetteState = status.stateCached ? 'provisioned' : 'first-use';
+      _applyAnisetteStatus(status);
     } catch (error) {
       if (!BaseViewModel.isShutdown(error)) {
         _anisetteError = BaseViewModel.errorText(error);

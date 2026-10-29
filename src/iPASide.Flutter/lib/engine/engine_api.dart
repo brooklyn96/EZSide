@@ -454,6 +454,22 @@ class EngineApi {
         _asObject(AnisetteStatus.fromJson),
       );
 
+  /// Saves the anisette services to try, in order: the first is used first and the rest are
+  /// the fallback. An empty list restores the engine's built-in servers.
+  ///
+  /// Returns the resulting status, so the card can redraw from what the engine actually saved
+  /// rather than from what the field held.
+  Future<AnisetteStatus> setAnisetteServers(List<String> servers) => _runTyped<AnisetteStatus>(
+        <String>['anisette', '--set-servers', servers.join(',')],
+        _asObject(AnisetteStatus.fromJson),
+      );
+
+  /// Forgets the saved services and goes back to the engine's built-in list.
+  Future<AnisetteStatus> clearAnisetteServers() => _runTyped<AnisetteStatus>(
+        <String>['anisette', '--clear-servers'],
+        _asObject(AnisetteStatus.fromJson),
+      );
+
   // ---- Apple device support ---------------------------------------------- //
 
   /// Reports whether Apple Mobile Device Service is running, stopped or absent.

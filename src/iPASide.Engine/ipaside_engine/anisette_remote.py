@@ -73,6 +73,14 @@ SERVERS: tuple[str, ...] = (
 #: Set to one server URL to use only that one (for a self-hosted server, or to test).
 SERVER_ENV = "IPASIDE_ANISETTE_SERVER"
 
+#: Where Settings -> Anisette keeps the list the user chose. Order is priority: the first entry is
+#: tried first and the rest are the fallback when it does not answer.
+SERVERS_FILE = "servers.json"
+
+#: Most services a saved list may hold. Every entry that cannot be reached costs a timeout, so a
+#: longer list makes sign-in slower rather than more reliable.
+MAX_SERVERS = 8
+
 STATE_FILE = "remote-v3.json"
 _USER_AGENT = "iPASide"
 _HTTP_TIMEOUT = 20.0
@@ -259,6 +267,89 @@ def _state_path() -> Path:
     return paths.anisette_dir() / STATE_FILE
 
 
+# --------------------------------------------------------------------------- #
+# The server list the user chose in Settings
+# --------------------------------------------------------------------------- #
+def _servers_path() -> Path:
+    return paths.anisette_dir() / SERVERS_FILE
+
+
+def normalise_servers(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    """Clean a user-supplied server list, in priority order.
+
+    Blank entries are dropped and duplicates collapsed. An address that could not work is
+    rejected here rather than at sign-in, where the message would be about Apple instead of
+    about the address the user typed.
+
+    The list is capped at :data:`MAX_SERVERS` because a server that cannot be reached costs a
+    timeout: a long list of dead addresses would turn sign-in into minutes of waiting, which is
+    the opposite of what a fallback is for.
+    """
+    cleaned: list[str] = []
+    for value in values:
+        url = str(value).strip().rstrip("/")
+        if not url:
+            continue
+        if not _valid_server_url(url):
+            raise AnisetteError(
+                f"{url!r} is not an anisette service address. Use https://, or http:// to "
+                "this machine (127.0.0.1 or localhost) only."
+            )
+        if url not in cleaned:
+            cleaned.append(url)
+    if len(cleaned) > MAX_SERVERS:
+        raise AnisetteError(
+            f"At most {MAX_SERVERS} anisette services can be listed (got {len(cleaned)}). "
+            "Each one that cannot be reached costs a timeout, so a longer list only makes "
+            "sign-in slower."
+        )
+    return tuple(cleaned)
+
+
+def load_servers() -> tuple[str, ...] | None:
+    """The list saved from Settings, or None when the built-in one should be used."""
+    try:
+        raw = json.loads(_servers_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    entries = raw.get("servers") if isinstance(raw, dict) else None
+    if not isinstance(entries, list):
+        return None
+    try:
+        cleaned = normalise_servers([entry for entry in entries if isinstance(entry, str)])
+    except AnisetteError:
+        # A stale or hand-edited file must not break sign-in; fall back to the built-ins.
+        return None
+    return cleaned or None
+
+
+def save_servers(servers: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    """Persist the user's choice. An empty list clears it and restores the built-ins."""
+    cleaned = normalise_servers(servers)
+    if not cleaned:
+        clear_servers()
+        return ()
+    path = _servers_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(json.dumps({"servers": list(cleaned)}, indent=2), encoding="utf-8")
+    temporary.replace(path)
+    return cleaned
+
+
+def clear_servers() -> None:
+    """Forget the saved list, so the built-in servers are used again."""
+    try:
+        _servers_path().unlink()
+    except OSError:
+        pass
+
+
+def configured_servers() -> tuple[str, ...] | None:
+    """What Settings has saved, for reporting without forcing a network call."""
+    return load_servers()
+
+
 def _load_state() -> _State:
     try:
         raw = json.loads(_state_path().read_text(encoding="utf-8"))
@@ -342,8 +433,16 @@ class RemoteAnisette:
 
     # -- servers ------------------------------------------------------------ #
     def servers(self) -> tuple[str, ...]:
+        """The servers to try, in order: what Settings saved, then the environment, then built-ins.
+
+        A self-hosted server belongs first with the public ones behind it, so a machine that is
+        asleep costs one timeout rather than the whole sign-in.
+        """
         if self._servers is not None:
             return self._servers
+        chosen = load_servers()
+        if chosen:
+            return chosen
         override = os.environ.get(SERVER_ENV, "").strip().rstrip("/")
         if override:
             if not _valid_server_url(override):
