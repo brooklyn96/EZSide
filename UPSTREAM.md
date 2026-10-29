@@ -5,8 +5,8 @@ EZSide is based on [iPASide](https://github.com/pwnapplehat/iPASide) by pwnapple
 | Item | Value |
 |---|---|
 | Upstream repository | https://github.com/pwnapplehat/iPASide |
-| Imported commit | `cda4a0c329147bf65f4b55ee2c90f3de3a04f537` (release 1.2.13, 2026-10-27) |
-| Import method | `git archive` of that commit, committed as one import commit (no upstream history) |
+| Imported commit | `8334cc8dfe1632c18de7119ca140d38bd12f3f75` (release 1.2.14, 2026-10-29), taken as a port of that one commit on top of `cda4a0c329147bf65f4b55ee2c90f3de3a04f537` (release 1.2.13, 2026-10-27) |
+| Import method | `git archive` of `cda4a0c`, committed as one import commit (no upstream history); `8334cc8` ported by hand |
 
 ## Taking upstream fixes
 
