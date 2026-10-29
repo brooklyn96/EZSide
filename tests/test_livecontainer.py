@@ -288,6 +288,124 @@ def test_seeding_writes_only_the_p12_when_the_dylib_is_absent(monkeypatch, tmp_p
     assert set(written) == {livecontainer.CERTIFICATE_NAME}
     assert livecontainer.CERTIFICATE_NAME in result["instructions"]
     assert "iPASide" in result["instructions"], "the password must be shown to the user"
+    assert "EZSide-certificate.p12" in result["instructions"]
+    assert "iPASide-certificate" not in result["instructions"]
+
+
+def test_the_certificate_is_named_for_ezside_and_the_old_name_is_legacy():
+    assert livecontainer.CERTIFICATE_NAME == "EZSide-certificate.p12"
+    assert livecontainer.LEGACY_CERTIFICATE_NAMES == ("iPASide-certificate.p12",)
+
+
+class _FakeService:
+    """The slice of house_arrest's AFC service that seeding touches."""
+
+    def __init__(self, documents, rm_error=None):
+        self.documents = set(documents)
+        self.rm_error = rm_error
+        self.removed: list[str] = []
+
+    async def rm_single(self, path):
+        if self.rm_error:
+            raise self.rm_error
+        name = path.rsplit("/", 1)[-1]
+        if name not in self.documents:
+            raise FileNotFoundError(path)
+        self.documents.discard(name)
+        self.removed.append(path)
+
+
+def test_seeding_removes_a_legacy_p12():
+    import asyncio
+
+    service = _FakeService({"iPASide-certificate.p12", "Applications"})
+    asyncio.run(livecontainer._remove_legacy_certificates(service))
+
+    assert service.removed == ["/Documents/iPASide-certificate.p12"]
+    assert service.documents == {"Applications"}
+
+
+def test_removing_a_legacy_p12_tolerates_not_found_and_errors():
+    import asyncio
+
+    asyncio.run(livecontainer._remove_legacy_certificates(_FakeService(set())))
+    asyncio.run(
+        livecontainer._remove_legacy_certificates(_FakeService(set(), rm_error=OSError("afc")))
+    )
+
+
+def test_write_documents_clears_the_legacy_p12_before_writing(monkeypatch):
+    """The real AFC path: the legacy file goes, the new name is written."""
+    import asyncio
+    import sys
+    import types
+
+    events: list[tuple[str, str]] = []
+
+    class Service(_FakeService):
+        async def makedirs(self, path):
+            events.append(("makedirs", path))
+
+        async def set_file_contents(self, path, payload):
+            events.append(("write", path))
+
+        async def rm_single(self, path):
+            events.append(("rm", path))
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class HouseArrest:
+        @staticmethod
+        async def create(_client, _bundle_id):
+            return Service(set())
+
+    async def create(_serial):
+        return object()
+
+    async def close(_client):
+        return None
+
+    module = types.ModuleType("pymobiledevice3.services.house_arrest")
+    module.HouseArrestService = HouseArrest
+    monkeypatch.setitem(sys.modules, "pymobiledevice3.services.house_arrest", module)
+    monkeypatch.setattr(livecontainer.lockdown, "create", create)
+    monkeypatch.setattr(livecontainer.lockdown, "close", close)
+
+    asyncio.run(
+        livecontainer._write_documents.__wrapped__(
+            BUNDLE_ID, "UDID", {livecontainer.CERTIFICATE_NAME: b"p12"}
+        )
+    )
+
+    assert events.index(("rm", "/Documents/iPASide-certificate.p12")) < events.index(
+        ("write", "/Documents/EZSide-certificate.p12")
+    )
+
+
+@pytest.mark.parametrize(
+    "documents, expected",
+    [
+        (["EZSide-certificate.p12"], True),
+        (["iPASide-certificate.p12"], True),
+        (["Applications"], False),
+    ],
+)
+def test_status_sees_the_p12_under_the_new_or_a_legacy_name(monkeypatch, documents, expected):
+    monkeypatch.setattr(livecontainer.device, "resolve_serial", lambda serial: "UDID")
+    monkeypatch.setattr(
+        livecontainer.apps, "list_installed", lambda serial: {BUNDLE_ID: {"name": "LiveContainer"}}
+    )
+
+    async def listing(_bundle_id, _serial):
+        return documents
+
+    monkeypatch.setattr(livecontainer, "_list_documents", listing)
+
+    assert livecontainer.status()["certificate_file_present"] is expected
 
 
 def test_seeding_failure_is_reported_not_raised(monkeypatch, tmp_path):

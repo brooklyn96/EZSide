@@ -4,6 +4,27 @@ All notable changes to iPASide are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.3.3] - 2026-10-29
+
+### Fixed
+
+- **"You already have a current iOS Development certificate or a pending certificate request" (Apple
+  error 7460) now explains itself.** Taken from iPASide 1.2.14. On a free Apple ID that already holds
+  development certificates made by other tools, Apple refuses to issue a new one for EZSide, and its
+  sentence reads as if EZSide had made the existing one. The message now names the other certificates,
+  says that EZSide never revokes a certificate it did not create (that would stop every app it signed
+  from opening), and says how to continue: revoke one of them on the Account page, accepting that the
+  apps it signed stop opening until the tool that made it signs them again. Nothing is revoked
+  automatically, as before.
+
+## [1.3.2] - 2026-10-28
+
+### Fixed
+
+- **LiveContainer's certificate import says EZSide.** The certificate EZSide leaves in LiveContainer
+  is now `EZSide-certificate.p12` (and carries the EZSide name inside), instead of `iPASide-...`.
+  An older `iPASide-certificate.p12` is removed the next time EZSide sets the certificate up.
+
 ## [1.3.1] - 2026-10-28
 
 ### Fixed
