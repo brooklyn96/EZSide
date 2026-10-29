@@ -106,3 +106,25 @@ def test_local_http_is_accepted_for_a_self_hosted_server() -> None:
     assert anisette_remote.normalise_servers(["http://localhost:6969"]) == (
         "http://localhost:6969",
     )
+
+
+def test_the_list_is_capped() -> None:
+    """Each entry that cannot be reached costs a timeout, so a long list is slower, not safer."""
+    too_many = [
+        f"https://ani{index}.example.com" for index in range(anisette_remote.MAX_SERVERS + 1)
+    ]
+
+    with pytest.raises(AnisetteError, match="At most"):
+        anisette_remote.save_servers(too_many)
+
+
+def test_the_cap_counts_unique_addresses_only() -> None:
+    """Duplicates collapse first, so a list is never refused for repeating itself."""
+    repeated = [
+        f"https://ani{index % 3}.example.com" for index in range(anisette_remote.MAX_SERVERS * 2)
+    ]
+
+    saved = anisette_remote.save_servers(repeated)
+
+    assert len(saved) == 3
+    assert len(saved) <= anisette_remote.MAX_SERVERS

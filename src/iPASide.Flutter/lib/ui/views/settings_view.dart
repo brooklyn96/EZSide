@@ -524,6 +524,12 @@ class _AnisetteSectionState extends State<_AnisetteSection> {
     if (mounted && _vm.anisetteSaveError == null) _controller.clear();
   }
 
+  /// A service on this PC: the only kind that keeps the requests off the network entirely.
+  static bool _isLocalAddress(String url) {
+    final String host = (Uri.tryParse(url)?.host ?? '').toLowerCase();
+    return host == '127.0.0.1' || host == 'localhost' || host == '::1';
+  }
+
   Widget _serverLine(String address, int index, int count) {
     final palette = context.palette;
     return Padding(
@@ -544,6 +550,13 @@ class _AnisetteSectionState extends State<_AnisetteSection> {
               overflow: TextOverflow.ellipsis,
             ),
           ),
+          if (index == 0) ...<Widget>[
+            const SizedBox(width: Space.s2),
+            Text(
+              'PRIMARY',
+              style: context.t.caption.copyWith(color: palette.accent, letterSpacing: 0.6),
+            ),
+          ],
           GhostIconButton(
             icon: Icons.arrow_upward,
             tooltip: 'Try this one earlier',
@@ -583,6 +596,15 @@ class _AnisetteSectionState extends State<_AnisetteSection> {
             ),
           for (int i = 0; i < servers.length; i++)
             _serverLine(servers[i], i, servers.length),
+          if (servers.isNotEmpty && !_isLocalAddress(servers.first)) ...<Widget>[
+            const SizedBox(height: Space.s2),
+            Text(
+              'The first service is a public host: whoever runs it can see your IP address and '
+              'the one-time passwords it hands out. Put a server you host yourself first if you '
+              'have one.',
+              style: context.t.smallMuted,
+            ),
+          ],
           const SizedBox(height: Space.s3),
           Row(
             children: <Widget>[

@@ -77,6 +77,10 @@ SERVER_ENV = "IPASIDE_ANISETTE_SERVER"
 #: tried first and the rest are the fallback when it does not answer.
 SERVERS_FILE = "servers.json"
 
+#: Most services a saved list may hold. Every entry that cannot be reached costs a timeout, so a
+#: longer list makes sign-in slower rather than more reliable.
+MAX_SERVERS = 8
+
 STATE_FILE = "remote-v3.json"
 _USER_AGENT = "iPASide"
 _HTTP_TIMEOUT = 20.0
@@ -276,6 +280,10 @@ def normalise_servers(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
     Blank entries are dropped and duplicates collapsed. An address that could not work is
     rejected here rather than at sign-in, where the message would be about Apple instead of
     about the address the user typed.
+
+    The list is capped at :data:`MAX_SERVERS` because a server that cannot be reached costs a
+    timeout: a long list of dead addresses would turn sign-in into minutes of waiting, which is
+    the opposite of what a fallback is for.
     """
     cleaned: list[str] = []
     for value in values:
@@ -289,6 +297,12 @@ def normalise_servers(values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
             )
         if url not in cleaned:
             cleaned.append(url)
+    if len(cleaned) > MAX_SERVERS:
+        raise AnisetteError(
+            f"At most {MAX_SERVERS} anisette services can be listed (got {len(cleaned)}). "
+            "Each one that cannot be reached costs a timeout, so a longer list only makes "
+            "sign-in slower."
+        )
     return tuple(cleaned)
 
 
