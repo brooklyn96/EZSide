@@ -12,7 +12,9 @@ reporting/cleanup of a folder full of kept IPAs.
 
 from __future__ import annotations
 
+import contextlib
 import datetime
+import functools
 import os
 import plistlib
 import re
@@ -290,6 +292,7 @@ def run_sideload(
     record: bool = True,
     allow_other_platform: bool = False,
     profile: str | None = None,
+    signer: str = "auto",
     on_progress: ProgressFn | None = None,
 ) -> dict[str, Any]:
     """Provision + sign + install an IPA, then record it for auto-refresh.
@@ -308,9 +311,31 @@ def run_sideload(
     ``source_ipa`` is the path to record as the user's file when ``ipa_path`` is that
     copy (a refresh); it defaults to ``ipa_path``. Runs under
     :func:`refresh.operation_lock`.
+
+    ``signer`` picks the certificate: ``"apple"`` provisions through the Apple ID,
+    ``"custom"`` signs with the imported certificate (see :mod:`custom_cert`) and never
+    talks to Apple, and ``"auto"`` uses the imported one while it is active and its
+    profile lists this device, else the Apple ID. A named ``profile`` always signs with
+    the Apple ID: its app groups and entitlements have to be registered on an App ID,
+    which an imported profile cannot do.
     """
+    if signer not in ("auto", "apple", "custom"):
+        raise SideloadError(f"Unknown signer '{signer}': use auto, apple or custom.")
     progress: ProgressFn = on_progress or (lambda *_args: None)
     udid = resolve_udid(udid)
+
+    use_custom = False
+    if not profile and signer != "apple":
+        # Imported here: the module only matters when an imported certificate might be used.
+        from . import custom_cert
+
+        if signer == "custom":
+            use_custom = True
+        elif custom_cert.active():
+            use_custom = bool((custom_cert.status(udid) or {}).get("device_ok"))
+            if not use_custom:
+                progress("provision", None, "Your imported certificate does not include "
+                         "this iPhone; using your Apple ID.")
 
     info = ipa_module.inspect(ipa_path)
     if info.get("has_sc_info"):
@@ -336,14 +361,22 @@ def run_sideload(
 
     app_name = display_name or info.get("display_name") or info.get("bundle_id")
 
-    progress("provision", None, "Contacting Apple\u2026")
-    # A free account can't register a real App Store id, so default to a
-    # team-scoped id; honor an explicit override when given.
-    target_bundle_id = bundle_id or provision.team_scoped_bundle_id(info.get("bundle_id"))
-
     app_groups: list[str] = []
     entitlements: dict[str, Any] | None = None
     profile_dylibs: list[str] = []
+    if use_custom:
+        # The seller's profile already names the device, the App ID and the entitlements,
+        # so there is nothing to register: no Apple ID, no App Groups, and zsign signs
+        # with the profile's own entitlements. Raises when this iPhone is not in it.
+        progress("provision", None, "Using your imported certificate\u2026")
+        bundle = custom_cert.signing_bundle(info.get("bundle_id"), udid, bundle_id)
+        target_bundle_id = bundle["bundle_id"]
+    else:
+        progress("provision", None, "Contacting Apple\u2026")
+        # A free account can't register a real App Store id, so default to a
+        # team-scoped id; honor an explicit override when given.
+        target_bundle_id = bundle_id or provision.team_scoped_bundle_id(info.get("bundle_id"))
+
     if profile:
         # Keyed by team, and the app groups have to exist before the profile is
         # downloaded, so this resolves before provisioning rather than before signing.
@@ -356,17 +389,18 @@ def run_sideload(
     # profile. Reading them here, for every app, is what makes a later sign
     # keep the entitlement instead of dropping it. They are best effort: Apple
     # may refuse an id another team owns, and the app installs without it.
-    ipa_groups: list[str] = []
-    for group in ipa_module.app_group_identifiers(ipa_path):
-        if group not in app_groups:
-            ipa_groups.append(group)
+    if not use_custom:
+        ipa_groups: list[str] = []
+        for group in ipa_module.app_group_identifiers(ipa_path):
+            if group not in app_groups:
+                ipa_groups.append(group)
 
-    bundle = provision.ensure_signing_assets(
-        target_bundle_id, udid, app_name=app_name,
-        on_step=lambda message: progress("provision", None, message),
-        app_groups=app_groups,
-        optional_app_groups=ipa_groups,
-    )
+        bundle = provision.ensure_signing_assets(
+            target_bundle_id, udid, app_name=app_name,
+            on_step=lambda message: progress("provision", None, message),
+            app_groups=app_groups,
+            optional_app_groups=ipa_groups,
+        )
 
     progress("sign", None, "Signing the app\u2026")
     # The user's tweaks, unpacked from any .deb, plus whatever the signing profile
@@ -437,11 +471,14 @@ def run_sideload(
             Path(output).unlink(missing_ok=True)
 
     expires_at: str | None = None
-    try:
-        expiry = refresh.profile_expiration(Path(bundle["profile_path"]).read_bytes())
-        expires_at = expiry.isoformat() if expiry else None
-    except OSError:
-        pass
+    if use_custom:
+        expires_at = bundle.get("expires_at")
+    else:
+        try:
+            expiry = refresh.profile_expiration(Path(bundle["profile_path"]).read_bytes())
+            expires_at = expiry.isoformat() if expiry else None
+        except OSError:
+            pass
 
     result = {
         "status": "installed",
@@ -458,6 +495,11 @@ def run_sideload(
         "cached_ipa": None,
         "post_install": post_install,
     }
+    if use_custom:
+        # The marker that keeps auto-refresh away from this app and lets resign_custom
+        # find it; Apple-signed records carry no "signer" at all, which means "apple".
+        result["signer"] = "custom"
+        result["cert_fingerprint"] = bundle.get("fingerprint")
     if record:
         result["cached_ipa"] = refresh.cache_ipa(target_bundle_id, ipa_path)
         # Everything but signed_ipa: `signed --clean` can remove that file at any
@@ -772,22 +814,31 @@ def refresh_record(
     current preference, which the caller (the ``refresh`` command, including the
     headless auto-refresh run) passes in so a refresh honours whatever the setting
     says today rather than what it said when the app was first sideloaded.
+
+    A record signed with an imported certificate (``signer == "custom"``) is always
+    re-signed with the one imported now, and with no Apple ID at all: its profile came
+    from the seller, so there is no new one to fetch. That is also how an app moves to a
+    replacement certificate, whose fingerprint no longer matches the record's.
     """
     options = entry.get("options") or {}
     progress: ProgressFn = on_progress or (lambda *_args: None)
+    custom = entry.get("signer") == "custom"
     # Only a re-sign needs an IPA, so the profile path is tried without one; a refresh
     # that can only re-sign still fails on a missing file before any round trip.
-    profile_first = bool(not resign and entry.get("cert_serial") and entry.get("cached_ipa"))
+    profile_first = bool(
+        not custom and not resign and entry.get("cert_serial") and entry.get("cached_ipa")
+    )
     if not profile_first:
         _refresh_source(entry)
 
-    account = _refresh_account(entry)
-    with gsa.acting_as(account):
+    with contextlib.nullcontext() if custom else gsa.acting_as(_refresh_account(entry)):
         if profile_first:
             done = _refresh_profile_only(entry, progress)
             if done is not None:
                 return done
         source = _refresh_source(entry)
+        if custom:
+            _check_custom_resign(entry)
         result = run_sideload(
             source,
             entry.get("udid"),
@@ -804,9 +855,96 @@ def refresh_record(
             keep_signed=keep_signed,
             signed_dir=signed_dir,
             profile=options.get("profile"),
+            # Whatever signed it signs it again: an Apple-signed app stays with its Apple
+            # ID even while an imported certificate is active.
+            signer="custom" if custom else "apple",
             on_progress=on_progress,
         )
     return {**result, "refresh_mode": "resign"}
+
+
+def _check_custom_resign(entry: dict[str, Any]) -> None:
+    """Refuse, before anything is signed, a custom re-sign that iOS or the profile rules out.
+
+    First whether the new certificate can sign this app for this iPhone at all: it must
+    be active, list the record's iPhone, and its App ID must cover the recorded id (an
+    explicit App ID covers that one id, a ``p.*`` one only ids starting with ``p.``).
+    Only then the team: a replacement from another team changes the app's TEAM.bundle
+    identity, which iOS will not update in place, so the user has to delete the app
+    first, after which it is no longer installed and installs fresh. Checking the team
+    last keeps that delete advice from costing the app when the re-sign would fail anyway.
+    """
+    from . import custom_cert
+
+    udid = entry.get("udid")
+    info = custom_cert.status(udid)
+    if info is None:
+        return  # run_sideload says that nothing is imported
+    bundle_id = entry.get("bundle_id")
+    name = entry.get("name") or bundle_id
+    if not custom_cert.active():
+        raise SideloadError(
+            f"The imported certificate or its profile expired on {info.get('expires')}, so "
+            f"it cannot re-sign {name}. Import a new one."
+        )
+    if not info.get("device_ok"):
+        raise SideloadError(
+            f"This iPhone (UDID {udid}) is not in the new provisioning profile, so it cannot "
+            f"re-sign {name}. Ask the seller to add it."
+        )
+    covered = str(info.get("app_id") or "").partition(".")[2]
+    if covered and not info.get("wildcard") and covered != bundle_id:
+        raise SideloadError(
+            f"The new provisioning profile only covers {covered}, so it cannot re-sign "
+            f"{name} ({bundle_id}). Ask the seller for a profile that covers {bundle_id}."
+        )
+    prefix = covered[:-1] if covered.endswith(".*") else ""
+    if prefix and not str(bundle_id).startswith(prefix):
+        raise SideloadError(
+            f"The new provisioning profile only covers ids starting with {prefix}, so it "
+            f"cannot re-sign {name} ({bundle_id}). Ask the seller for a profile that covers "
+            f"{bundle_id}."
+        )
+    old_team, new_team = entry.get("team_id"), info.get("team_id")
+    if (old_team and new_team and old_team != new_team
+            and bundle_id in apps.list_installed(entry.get("udid"))):
+        raise SideloadError(
+            f"{name} was signed by team {old_team} and the new certificate is team "
+            f"{new_team}, so iOS will not update it in place. Delete {name} from the "
+            f"iPhone (its data will be lost), then press Re-sign again."
+        )
+
+
+@refresh.operation_lock()
+def resign_custom(
+    udid: str | None = None, on_progress: Callable[..., None] | None = None
+) -> list[dict[str, Any]]:
+    """Re-sign every app signed with an imported certificate, with the one imported now.
+
+    What follows importing a replacement certificate. ``udid`` limits it to one device;
+    None means every such record. Each app gets its own result, ``{bundle_id, name, ok,
+    error}``, and one that fails does not stop the rest. ``on_progress`` is called as
+    ``(bundle_id, step, percent, message)`` so each line says which app it is about.
+    """
+    results: list[dict[str, Any]] = []
+    for entry in refresh.custom_records():
+        if udid and entry.get("udid") != udid:
+            continue
+        outcome: dict[str, Any] = {
+            "bundle_id": entry.get("bundle_id"),
+            "name": entry.get("name"),
+            "ok": True,
+            "error": None,
+        }
+        app_progress = (
+            functools.partial(on_progress, entry.get("bundle_id")) if on_progress else None
+        )
+        try:
+            refresh_record(entry, app_progress, resign=True)
+        except Exception as exc:  # noqa: BLE001 - reported per app, the others still run
+            outcome.update(ok=False, error=str(exc) or type(exc).__name__)
+        results.append(outcome)
+    return results
 
 
 def _kept_signed_ipas(directory: Path) -> list[tuple[Path, os.stat_result]]:
