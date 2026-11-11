@@ -45,6 +45,9 @@ class _SideloadViewState extends State<SideloadView> {
       _vm?.removeListener(_onModelChanged);
       _vm = vm..addListener(_onModelChanged);
       _wasShowingStepper = vm.showStepper;
+      // Every visit: a certificate imported on the Account page meanwhile has to
+      // show here the moment the user comes back.
+      vm.loadCertificate();
     }
   }
 
@@ -186,6 +189,10 @@ class _SideloadViewState extends State<SideloadView> {
               child: DeviceTargetBar(selection: context.watch<DeviceSelection>()),
             ),
             const SizedBox(height: Space.s4),
+            if (vm.hasReadCertificate) ...[
+              Entrance(index: 4, child: _SignerLine(vm: vm)),
+              const SizedBox(height: Space.s3),
+            ],
             Entrance(
               index: 4,
               child: AppButton(
@@ -272,6 +279,69 @@ class _TrustHint extends StatelessWidget {
         ],
       ),
       style: context.t.small,
+    );
+  }
+}
+
+/// Which signer the next sideload uses, read just before the button that starts
+/// it: the imported certificate (no Apple ID, lasts until it expires) or the
+/// Apple ID (7 days), plus the choice to prefer the Apple ID anyway.
+class _SignerLine extends StatelessWidget {
+  const _SignerLine({required this.vm});
+
+  final SideloadViewModel vm;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.palette;
+    final String? warning = vm.certificateWarning;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            // Neither signer's icon while the answer for this iPhone is out; the
+            // spinner sits in the icon's box so the text does not shift.
+            if (vm.isCheckingCertificate)
+              const SizedBox.square(
+                dimension: Sizes.icon,
+                child: Center(child: Spinner(size: Sizes.spinnerSmall)),
+              )
+            else
+              Icon(
+                vm.signsWithCertificate
+                    ? Icons.verified_outlined
+                    : Icons.person_outline_rounded,
+                size: Sizes.icon,
+                color: vm.signsWithCertificate ? p.success : p.textMuted,
+              ),
+            const SizedBox(width: Space.s2),
+            Expanded(child: Text(vm.signerText, style: context.t.smallMuted)),
+          ],
+        ),
+        if (warning != null) ...[
+          const SizedBox(height: Space.s2),
+          Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, size: Sizes.icon, color: p.warning),
+              const SizedBox(width: Space.s2),
+              Expanded(
+                child: Text(warning, style: context.t.small.copyWith(color: p.warning)),
+              ),
+            ],
+          ),
+        ],
+        if (vm.canSignWithCertificate) ...[
+          const SizedBox(height: Space.s1),
+          AppCheckbox(
+            label: 'Use my Apple ID instead',
+            value: vm.useAppleId,
+            // Locked with the rest of the options once a run has started.
+            onChanged: vm.isRunning ? null : (value) => vm.useAppleId = value,
+          ),
+        ],
+      ],
     );
   }
 }
