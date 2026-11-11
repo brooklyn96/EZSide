@@ -195,6 +195,12 @@ class _FakePicker implements FilePickerService {
     await whilePickingPairing?.call();
     return pairingToSave;
   }
+
+  @override
+  Future<String?> pickCertificate() async => null;
+
+  @override
+  Future<String?> pickProvisioningProfile() async => null;
 }
 
 /// A dialog stand-in: answers [confirm] without a navigator.

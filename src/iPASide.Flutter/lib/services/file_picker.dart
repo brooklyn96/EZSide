@@ -20,6 +20,12 @@ abstract class FilePickerService {
 
   /// Where to write an exported pairing file; null when cancelled.
   Future<String?> savePairingFile({required String suggestedName});
+
+  /// A bought certificate's `.p12`; null when cancelled.
+  Future<String?> pickCertificate();
+
+  /// The `.mobileprovision` that came with it; null when cancelled.
+  Future<String?> pickProvisioningProfile();
 }
 
 /// Shell-backed implementation.
@@ -65,6 +71,28 @@ class NativeFilePickerService implements FilePickerService {
     FileDialogFilter(
       label: 'Pairing file (*.plist;*.mobiledevicepairing)',
       spec: '*.plist;*.mobiledevicepairing',
+    ),
+    FileDialogFilter.allFiles,
+  ];
+
+  /// Title of the dialog that picks a bought certificate.
+  static const String certificateTitle = 'Choose the certificate (.p12)';
+
+  /// Title of the dialog that picks the profile sold with it.
+  static const String profileTitle =
+      'Choose the provisioning profile (.mobileprovision)';
+
+  /// Type dropdown for the certificate dialog.
+  static const List<FileDialogFilter> certificateFilters = <FileDialogFilter>[
+    FileDialogFilter(label: 'Certificate (*.p12)', spec: '*.p12'),
+    FileDialogFilter.allFiles,
+  ];
+
+  /// Type dropdown for the profile dialog.
+  static const List<FileDialogFilter> profileFilters = <FileDialogFilter>[
+    FileDialogFilter(
+      label: 'Provisioning profile (*.mobileprovision)',
+      spec: '*.mobileprovision',
     ),
     FileDialogFilter.allFiles,
   ];
@@ -124,6 +152,30 @@ class NativeFilePickerService implements FilePickerService {
       fileName: suggestedName,
       defaultExtension: 'plist',
     );
+  }
+
+  @override
+  Future<String?> pickCertificate() async {
+    if (!Platform.isWindows) return null;
+    await _letTheTapPaint();
+
+    final List<String> chosen = WindowsFileDialog.open(
+      title: certificateTitle,
+      filters: certificateFilters,
+    );
+    return chosen.isEmpty ? null : chosen.first;
+  }
+
+  @override
+  Future<String?> pickProvisioningProfile() async {
+    if (!Platform.isWindows) return null;
+    await _letTheTapPaint();
+
+    final List<String> chosen = WindowsFileDialog.open(
+      title: profileTitle,
+      filters: profileFilters,
+    );
+    return chosen.isEmpty ? null : chosen.first;
   }
 
   /// Yields once before blocking.

@@ -53,11 +53,35 @@ void main() {
       ]);
     });
 
+    test('the certificate dialogs name the .p12 and the .mobileprovision', () {
+      expect(
+        NativeFilePickerService.certificateTitle,
+        'Choose the certificate (.p12)',
+      );
+      expect(
+        NativeFilePickerService.profileTitle,
+        'Choose the provisioning profile (.mobileprovision)',
+      );
+      expect(NativeFilePickerService.certificateFilters, <FileDialogFilter>[
+        const FileDialogFilter(label: 'Certificate (*.p12)', spec: '*.p12'),
+        FileDialogFilter.allFiles,
+      ]);
+      expect(NativeFilePickerService.profileFilters, <FileDialogFilter>[
+        const FileDialogFilter(
+          label: 'Provisioning profile (*.mobileprovision)',
+          spec: '*.mobileprovision',
+        ),
+        FileDialogFilter.allFiles,
+      ]);
+    });
+
     test('every spec is a pattern list the shell can parse', () {
       final List<FileDialogFilter> all = <FileDialogFilter>[
         ...NativeFilePickerService.ipaFilters,
         ...NativeFilePickerService.tweakFilters,
         ...NativeFilePickerService.pairingFilters,
+        ...NativeFilePickerService.certificateFilters,
+        ...NativeFilePickerService.profileFilters,
       ];
 
       for (final FileDialogFilter filter in all) {
@@ -65,7 +89,7 @@ void main() {
         for (final String pattern in filter.spec.split(';')) {
           expect(
             pattern,
-            matches(RegExp(r'^\*\.[A-Za-z*]+$')),
+            matches(RegExp(r'^\*\.[A-Za-z0-9*]+$')),
             reason: '${filter.label} has an unusable pattern',
           );
         }
@@ -79,6 +103,8 @@ void main() {
         ...NativeFilePickerService.ipaFilters,
         ...NativeFilePickerService.tweakFilters,
         ...NativeFilePickerService.pairingFilters,
+        ...NativeFilePickerService.certificateFilters,
+        ...NativeFilePickerService.profileFilters,
       ]) {
         for (final String pattern in filter.spec.split(';')) {
           expect(
@@ -117,6 +143,14 @@ void main() {
       test('pickPairingFile reports a cancelled pick too', () async {
         expect(
           await const NativeFilePickerService().pickPairingFile(),
+          isNull,
+        );
+      });
+
+      test('the certificate pickers report a cancelled pick too', () async {
+        expect(await const NativeFilePickerService().pickCertificate(), isNull);
+        expect(
+          await const NativeFilePickerService().pickProvisioningProfile(),
           isNull,
         );
       });

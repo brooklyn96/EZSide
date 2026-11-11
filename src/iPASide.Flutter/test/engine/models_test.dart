@@ -82,6 +82,50 @@ void main() {
       expect(summary.refreshed.single.bundleId, 'com.a');
       expect(summary.refreshed.single.status, 'error');
       expect(summary.refreshed.single.error, 'boom');
+      expect(summary.customExpiring, isEmpty);
+    });
+
+    test('ImportedCertificate reads every info field', () {
+      final ImportedCertificate certificate = ImportedCertificate.fromJson(_decode(
+        '{"name":"iPhone Distribution: Seller","team_id":"T1","team_name":"Seller",'
+        '"serial":"0A1B","fingerprint":"ab12","certificate_expires":"2027-11-01T00:00:00Z",'
+        '"profile_name":"Ad Hoc","profile_expires":"2027-10-01T00:00:00Z",'
+        '"expires":"2027-10-01T00:00:00Z","app_id":"T1.*","wildcard":true,'
+        '"all_devices":false,"device_count":3,"imported_at":"2026-11-11T10:00:00Z",'
+        '"device_ok":true}',
+      ));
+
+      expect(certificate.name, 'iPhone Distribution: Seller');
+      expect(certificate.teamId, 'T1');
+      expect(certificate.teamName, 'Seller');
+      expect(certificate.serial, '0A1B');
+      expect(certificate.fingerprint, 'ab12');
+      expect(certificate.certificateExpires, DateTime.utc(2027, 11));
+      expect(certificate.profileName, 'Ad Hoc');
+      expect(certificate.profileExpires, DateTime.utc(2027, 10));
+      expect(certificate.expires, DateTime.utc(2027, 10));
+      expect(certificate.appId, 'T1.*');
+      expect(certificate.wildcard, isTrue);
+      expect(certificate.allDevices, isFalse);
+      expect(certificate.deviceCount, 3);
+      expect(certificate.importedAt, DateTime.utc(2026, 11, 11, 10));
+      expect(certificate.deviceOk, isTrue);
+    });
+
+    test('ImportedCertificate leaves device_ok unknown when no phone was asked about', () {
+      expect(ImportedCertificate.fromJson(_decode('{"device_ok":null}')).deviceOk, isNull);
+      expect(ImportedCertificate.fromJson(_decode('{}')).deviceOk, isNull);
+    });
+
+    test('CertificateResignResult reads one app outcome', () {
+      final CertificateResignResult result = CertificateResignResult.fromJson(
+        _decode('{"bundle_id":"com.a","name":"A","ok":false,"error":"boom"}'),
+      );
+
+      expect(result.bundleId, 'com.a');
+      expect(result.name, 'A');
+      expect(result.ok, isFalse);
+      expect(result.error, 'boom');
     });
 
     test('DoctorReport parses its checks', () {
@@ -451,6 +495,16 @@ void main() {
       expect(options.dylibs, isEmpty);
       expect(options.bundleId, isNull);
       expect(options.name, isNull);
+      expect(options.signer, 'auto');
+    });
+
+    test('copyWith carries the signer, and it takes part in equality', () {
+      final SideloadOptions updated =
+          const SideloadOptions().copyWith(signer: 'custom');
+
+      expect(updated.signer, 'custom');
+      expect(updated, isNot(const SideloadOptions()));
+      expect(updated.copyWith(), updated);
     });
 
     test('the signed IPA defaults to the engine behaviour', () {

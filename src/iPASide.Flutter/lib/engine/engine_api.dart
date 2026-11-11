@@ -203,6 +203,78 @@ class EngineApi {
         onProgress: _progressPump(onProgress),
       );
 
+  // ---- Imported certificate ---------------------------------------------- //
+
+  /// The certificate imported from a seller, or null when none is.
+  ///
+  /// [udid] asks whether that iPhone is in its profile
+  /// ([ImportedCertificate.deviceOk]); omitted, that stays unknown.
+  Future<ImportedCertificate?> certificateStatus({String? udid}) async {
+    final EngineResult result =
+        await _client.run(<String>['cert-status', ..._targetArgs(udid)]);
+    if (!result.ok) {
+      throw EngineException.fromResult(result.data, result.error);
+    }
+    final Map<String, dynamic>? data = asJsonObject(result.data);
+    if (data == null) {
+      throw EngineException('The engine returned no data.');
+    }
+    final Map<String, dynamic>? info = asJsonObject(data['certificate']);
+    return info == null ? null : ImportedCertificate.fromJson(info);
+  }
+
+  /// Imports a `.p12` with its password and the `.mobileprovision` that came with
+  /// it, replacing any certificate imported before.
+  ///
+  /// The password travels via per-request env, NEVER argv, like the Apple ID's.
+  Future<ImportedCertificate> importCertificate(
+    String p12Path,
+    String password,
+    String profilePath,
+  ) =>
+      _runTyped<ImportedCertificate>(
+        <String>['cert-import', '--p12', p12Path, '--profile', profilePath],
+        (Object data) {
+          final Map<String, dynamic>? info =
+              asJsonObject(asJsonObject(data)?['certificate']);
+          return info == null ? null : ImportedCertificate.fromJson(info);
+        },
+        env: <String, String>{'IPASIDE_CERT_PASSWORD': password},
+      );
+
+  /// Forgets the imported certificate; true when there was one.
+  Future<bool> removeCertificate() => _runTyped<bool>(
+        <String>['cert-remove'],
+        (Object data) {
+          final Map<String, dynamic>? json = asJsonObject(data);
+          return json == null ? null : jsonBool(json, 'removed');
+        },
+      );
+
+  /// Re-signs every app installed with an imported certificate, from the IPA copy
+  /// kept for it, with the one imported now.
+  ///
+  /// The engine exits 1 when any app failed but still sends the per-app list, so
+  /// that list is returned rather than thrown away; callers MUST inspect
+  /// [CertificateResignResult.ok]. Any other failure throws.
+  Future<List<CertificateResignResult>> resignWithCertificate({
+    String? udid,
+    void Function(SideloadProgress progress)? onProgress,
+  }) async {
+    final EngineResult result = await _client.run(
+      <String>['cert-resign', ..._targetArgs(udid)],
+      onProgress: _progressPump(onProgress),
+    );
+    final Map<String, dynamic>? data = asJsonObject(result.data);
+    if (data != null && data['results'] is List) {
+      return jsonObjectList(data, 'results', CertificateResignResult.fromJson);
+    }
+    if (!result.ok) {
+      throw EngineException.fromResult(result.data, result.error);
+    }
+    throw EngineException('The engine returned no data.');
+  }
+
   // ---- Apple ID / session ----------------------------------------------- //
 
   /// Starts (or, with [code], completes) an Apple ID login.
@@ -521,7 +593,8 @@ class EngineApi {
   // ---- argv / progress (pure, unit-tested) ------------------------------- //
 
   /// Builds the sideload argv verbatim from the legacy web UI: the positional
-  /// path, the target `--udid`, optional trimmed `--bundle-id` / `--name`, the
+  /// path, the target `--udid`, optional trimmed `--bundle-id` / `--name`,
+  /// `--signer` only when it is not automatic, the
   /// negated remove flags only when their box is unchecked, file sharing when
   /// checked, the signed-IPA pair, one `--dylib` per tweak, and `--weak-dylibs`
   /// only when tweaks exist AND weak is checked.
@@ -544,6 +617,11 @@ class EngineApi {
     if (name != null && name.trim().isNotEmpty) {
       args.add('--name');
       args.add(name.trim());
+    }
+
+    if (options.signer != 'auto') {
+      args.add('--signer');
+      args.add(options.signer);
     }
 
     if (!options.removeExtensions) {
