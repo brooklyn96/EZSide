@@ -61,6 +61,8 @@ def _capture(monkeypatch: pytest.MonkeyPatch) -> dict:
         return _Proc()
 
     monkeypatch.setattr(signing.subprocess, "run", fake_run)
+    # Made-up identity path: the re-export of a real one is covered by test_signing_ephemeral_p12.py.
+    monkeypatch.setattr(signing, "_ephemeral_p12", lambda p12_path, password, folder: (p12_path, password))
     return captured
 
 
