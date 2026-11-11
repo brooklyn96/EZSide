@@ -26,6 +26,7 @@ from . import (
     anisette_remote,
     apple_support,
     apps,
+    custom_cert,
     developer,
     developer_mode,
     device,
@@ -441,6 +442,7 @@ def _cmd_sideload(args: argparse.Namespace) -> int:
             enable_file_sharing=args.enable_file_sharing,
             keep_signed=args.keep_signed,
             signed_dir=args.signed_dir,
+            signer=args.signer,
             on_progress=_progress_to_stderr(),
         )
     except _SIDELOAD_ERRORS as exc:
@@ -606,9 +608,11 @@ def _team_serials() -> dict[str, str | None]:
 
     Read from the local certificate cache of the account that provisions under the team
     (no Apple call); None when no signed-in account is known for it, or it has none.
+    Imported-certificate records are left out: their team is the seller's, not an account's.
     """
     serials: dict[str, str | None] = {}
-    for team_id in {r.get("team_id") for r in refresh.records()} - {None, ""}:
+    teams = {r.get("team_id") for r in refresh.records() if r.get("signer") != "custom"}
+    for team_id in teams - {None, ""}:
         account = gsa.account_for_team(team_id)
         serials[team_id] = provision.cached_serial(account) if account else None
     return serials
@@ -623,10 +627,13 @@ def _stale_records(
     without a serial (an older record) is included only when the team's certificate
     changed in this run (``start`` is how it began), because then whatever signed it has
     just been revoked. ``teams`` limits the look to those teams; None means every team.
+    Imported-certificate records are never stale here: auto-refresh does not touch them.
     """
     now = _team_serials()
     stale = []
     for r in refresh.records():
+        if r.get("signer") == "custom":
+            continue
         team_id = r.get("team_id")
         serial = now.get(team_id) if team_id else None
         if not serial or (teams is not None and team_id not in teams):
@@ -657,16 +664,38 @@ def _phone_error(udid: str | None, probes: dict[str, Exception | None]) -> Excep
     return probes[udid]
 
 
+def _custom_expiring() -> list[dict[str, Any]]:
+    """Apps signed with the imported certificate that expire soon (refresh never renews them)."""
+    return [
+        {"bundle_id": r["bundle_id"], "name": r.get("name"), "days_left": r.get("days_left")}
+        for r in refresh.custom_expiring()
+    ]
+
+
+def _print_custom_expiring(expiring: list[dict[str, Any]]) -> None:
+    for item in expiring:
+        days = item["days_left"]
+        left = "expired" if days is not None and days <= 0 else f"{days:.0f} day(s) left"
+        print(f"{item['bundle_id']}: signed with your imported certificate, {left}. "
+              "Import a new certificate and re-sign it.")
+
+
 def _refresh_busy(args: argparse.Namespace, busy: Exception) -> int:
     """The unattended run's answer when another EZSide operation holds the lock.
 
     Not a failure: the hourly run simply tries again next hour, so it gives up at once
     with nothing refreshed and the usual busy sentence as a message.
     """
+    try:
+        expiring = _custom_expiring()
+    except refresh.RegistryError:  # the warning is a bonus; the busy answer stays exit 0
+        expiring = []
     if args.json:
-        _emit(args, {"status": "done", "count": 0, "refreshed": [], "message": str(busy)})
+        _emit(args, {"status": "done", "count": 0, "refreshed": [], "message": str(busy),
+                     "custom_expiring": expiring})
     else:
         print(busy)
+        _print_custom_expiring(expiring)
     return 0
 
 
@@ -679,16 +708,28 @@ def _cmd_refresh(args: argparse.Namespace) -> int:
             if not args.unattended:
                 raise
             return _refresh_busy(args, busy)
+        # Imported-certificate records are never refreshed here, however the targets are
+        # chosen (--all, --bundle-id, due, unattended or not): they are re-signed only by
+        # cert-resign, because a renewal needs the replacement certificate, not an Apple ID.
+        def apple_only(found: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            return [r for r in found if r.get("signer") != "custom"]
+
         if args.bundle_id:
-            targets = [r for r in refresh.records() if r["bundle_id"] == args.bundle_id]
-            if not targets:
+            named = [r for r in refresh.records() if r["bundle_id"] == args.bundle_id]
+            targets = apple_only(named)
+            msg = None
+            if not named:
                 msg = f"'{args.bundle_id}' is not a recorded sideload."
+            elif not targets:
+                msg = (f"{named[0].get('name') or args.bundle_id} is signed with your imported "
+                       "certificate; use Re-sign on the Account page.")
+            if msg:
                 _emit(args, {"status": "error", "error": msg}) if args.json else print(msg)
                 return 1
         elif args.all:
-            targets = refresh.records()
+            targets = apple_only(refresh.records())
         else:
-            targets = refresh.due(args.within)
+            targets = apple_only(refresh.due(args.within))
 
         # A new certificate revokes the old one, and with it every app it signed, due or
         # not. So after each round the run looks again, from the local certificate cache,
@@ -752,7 +793,9 @@ def _cmd_refresh(args: argparse.Namespace) -> int:
                 break
 
     results = list(by_app.values())
-    summary = {"status": "done", "count": len(results), "refreshed": results}
+    expiring = _custom_expiring()
+    summary = {"status": "done", "count": len(results), "refreshed": results,
+               "custom_expiring": expiring}
     if args.json:
         _emit(args, summary)
     else:
@@ -762,6 +805,7 @@ def _cmd_refresh(args: argparse.Namespace) -> int:
             suffix = f" ({res['error']})" if res.get("error") else ""
             mode = f" [{res['refresh_mode']}]" if res.get("refresh_mode") else ""
             print(f"{res['bundle_id']}: {res['status']}{mode}{suffix}")
+        _print_custom_expiring(expiring)
     any_failed = any(res["status"] == "error" for res in results)
     return EXIT_PARTIAL_FAILURE if any_failed else 0
 
@@ -789,6 +833,69 @@ def _cmd_signed(args: argparse.Namespace) -> int:
     for item in report["files"]:
         print(f"  {item['name']}  {_mb(item['bytes'])}  {item['modified']}")
     return 0
+
+
+def _cmd_cert_import(args: argparse.Namespace) -> int:
+    """Import the seller's .p12 + .mobileprovision. The password comes from the environment
+    only, like the Apple ID password: argv would leak it into process listings."""
+    password = os.environ.get("IPASIDE_CERT_PASSWORD")
+    if password is None:
+        raise custom_cert.CustomCertError(
+            "The certificate password is missing. Set IPASIDE_CERT_PASSWORD (it is never "
+            "taken from the command line) and try again."
+        )
+    info = custom_cert.import_certificate(Path(args.p12), password, Path(args.profile))
+    if args.json:
+        _emit(args, {"status": "ok", "certificate": info})
+    else:
+        print(f"Imported {info['name']} (team {info['team_name']}), valid until {info['expires']}.")
+    return 0
+
+
+def _cmd_cert_status(args: argparse.Namespace) -> int:
+    info = custom_cert.status(args.udid)
+    if args.json:
+        _emit(args, {"status": "ok", "certificate": info})
+    elif info is None:
+        print("No certificate imported.")
+    else:
+        print(f"{info['name']} (team {info['team_name']}), valid until {info['expires']}.")
+        if info.get("device_ok") is False:
+            print("This iPhone is not in the provisioning profile.")
+    return 0
+
+
+def _cmd_cert_remove(args: argparse.Namespace) -> int:
+    removed = custom_cert.remove()
+    if args.json:
+        _emit(args, {"status": "ok", "removed": removed})
+    else:
+        print("Certificate removed." if removed else "No certificate was imported.")
+    return 0
+
+
+def _cmd_cert_resign(args: argparse.Namespace) -> int:
+    """Re-sign every app signed with an imported certificate, after a replacement."""
+    def on_progress(bundle_id: str, step: str, percent: Any, message: str | None) -> None:
+        _progress_to_stderr(bundle_id)(step, percent, message)
+
+    # The desktop app waits on this command: a busy lock answers at once (OperationBusy,
+    # exit 1) instead of holding the Account page. resign_custom's own lock is re-entrant.
+    with refresh.operation_lock(wait=False):
+        results = sideload.resign_custom(args.udid, on_progress=on_progress)
+    failed = [r for r in results if not r.get("ok")]
+    if args.json:
+        payload: dict[str, Any] = {"status": "ok", "results": results}
+        if failed:
+            # The serve loop reads "error" for a failed request; the per-app list stays complete.
+            payload["error"] = f"{len(failed)} of {len(results)} app(s) could not be re-signed."
+        _emit(args, payload)
+    else:
+        if not results:
+            print("No apps signed with an imported certificate.")
+        for r in results:
+            print(f"{r['bundle_id']}: " + ("re-signed" if r.get("ok") else f"failed ({r.get('error')})"))
+    return 1 if failed else 0
 
 
 def _cmd_forget(args: argparse.Namespace) -> int:
@@ -1294,6 +1401,10 @@ _HANDLERS = {
     "refresh": _cmd_refresh,
     "signed": _cmd_signed,
     "forget": _cmd_forget,
+    "cert-import": _cmd_cert_import,
+    "cert-status": _cmd_cert_status,
+    "cert-remove": _cmd_cert_remove,
+    "cert-resign": _cmd_cert_resign,
     "slots": _cmd_slots,
     "delete-app-id": _cmd_delete_app_id,
     "revoke-cert": _cmd_revoke_cert,
@@ -1517,6 +1628,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--remove-device-restrictions", action=argparse.BooleanOptionalAction, default=True,
         help="remove UISupportedDevices",
     )
+    sideload_parser.add_argument(
+        "--signer", choices=("auto", "apple", "custom"), default="auto",
+        help="sign with the imported certificate (custom), the Apple ID (apple), "
+             "or the imported one when there is one (auto, the default)",
+    )
 
     pairing_parser = sub.add_parser(
         "pairing",
@@ -1621,6 +1737,29 @@ def build_parser() -> argparse.ArgumentParser:
         "forget", parents=[common], help="remove an app from the sideload registry"
     )
     forget_parser.add_argument("bundle_id", help="installed bundle id to forget")
+
+    cert_import_parser = sub.add_parser(
+        "cert-import", parents=[common],
+        help="import a certificate (.p12 + .mobileprovision); password in IPASIDE_CERT_PASSWORD",
+    )
+    cert_import_parser.add_argument("--p12", required=True, help="path to the .p12 file")
+    cert_import_parser.add_argument(
+        "--profile", required=True, help="path to the .mobileprovision file"
+    )
+    cert_status_parser = sub.add_parser(
+        "cert-status", parents=[common], help="show the imported certificate, if any"
+    )
+    cert_status_parser.add_argument(
+        "--udid", default=None, help="also report whether this iPhone is in the profile"
+    )
+    sub.add_parser("cert-remove", parents=[common], help="remove the imported certificate")
+    cert_resign_parser = sub.add_parser(
+        "cert-resign", parents=[common],
+        help="re-sign every app signed with an imported certificate, using the current one",
+    )
+    cert_resign_parser.add_argument(
+        "--udid", default=None, help="only the apps on this iPhone"
+    )
 
     slots_parser = sub.add_parser(
         "slots", parents=[common],
