@@ -5,8 +5,8 @@ EZSide is based on [iPASide](https://github.com/pwnapplehat/iPASide) by pwnapple
 | Item | Value |
 |---|---|
 | Upstream repository | https://github.com/pwnapplehat/iPASide |
-| Imported commit | `8334cc8dfe1632c18de7119ca140d38bd12f3f75` (release 1.2.14, 2026-10-29), taken as a port of that one commit on top of `cda4a0c329147bf65f4b55ee2c90f3de3a04f537` (release 1.2.13, 2026-10-27) |
-| Import method | `git archive` of `cda4a0c`, committed as one import commit (no upstream history); `8334cc8` ported by hand |
+| Imported commit | `fcddc6258f76601ea45afaec5f5c1cc6ed89bc85` (release 1.2.15, 2026-11-11), taken as a port of `5de46b9` and `fcddc62` (`8334cc8..fcddc62` minus `f31250e`) on top of `8334cc8dfe1632c18de7119ca140d38bd12f3f75` (release 1.2.14, 2026-10-29). The pairing Wi-Fi Sync change `f31250e` was left out: EZSide already turns on Wi-Fi Sync when a device is connected over USB |
+| Import method | `git archive` of `cda4a0c` (release 1.2.13), committed as one import commit (no upstream history); `8334cc8`, `5de46b9` and `fcddc62` ported by hand |
 
 ## Taking upstream fixes
 
