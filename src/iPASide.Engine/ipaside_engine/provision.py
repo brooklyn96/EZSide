@@ -323,6 +323,8 @@ def _ensure_app_groups(
     app_id_id: str,
     identifiers: list[str],
     name: str,
+    optional: list[str] | None = None,
+    on_step: Callable[[str], None] | None = None,
 ) -> list[str]:
     """Attach app groups to an App ID so the profile grants them; return their ids.
 
@@ -330,24 +332,60 @@ def _ensure_app_groups(
     enabled on the App ID before a group can be assigned to it, and the profile has to
     be downloaded afterwards to pick the assignment up. Free accounts are allowed all
     of this - verified against one.
+
+    ``identifiers`` are required, so any Apple error raises. ``optional`` ones come from
+    the IPA, and Apple may well refuse an id another team owns: a refused one is skipped,
+    so the app installs without it rather than not at all.
     """
-    if not app_id.get("features", {}).get(developer.FEATURE_APP_GROUPS):
-        developer.enable_app_id_feature(team_id, app_id_id, developer.FEATURE_APP_GROUPS)
+    optional = optional or []
+    step = on_step or (lambda _m: None)
+
+    def skipped(groups: list[str]) -> None:
+        step(
+            f"Apple would not register app group{'s' if len(groups) > 1 else ''} "
+            f"{', '.join(groups)} for this Apple ID; installing without "
+            f"{'them' if len(groups) > 1 else 'it'}"
+        )
+
+    try:
+        if not app_id.get("features", {}).get(developer.FEATURE_APP_GROUPS):
+            developer.enable_app_id_feature(team_id, app_id_id, developer.FEATURE_APP_GROUPS)
+    except developer.DeveloperServicesError:
+        if identifiers:
+            raise
+        skipped(optional)
+        return []
 
     existing = {
         group.get("identifier"): group for group in developer.list_application_groups(team_id)
     }
     group_ids: list[str] = []
-    for identifier in identifiers:
+    accepted: list[str] = []
+    for identifier in [*identifiers, *optional]:
         group = existing.get(identifier)
         if group is None:
-            group = developer.add_application_group(team_id, identifier, name)
+            try:
+                group = developer.add_application_group(team_id, identifier, name)
+            except developer.DeveloperServicesError:
+                if identifier in identifiers:
+                    raise
+                skipped([identifier])
+                continue
         internal_id = group.get("applicationGroup")
         if not internal_id:
             raise gsa.GsaError(f"app group {identifier} has no id to assign")
         group_ids.append(internal_id)
+        accepted.append(identifier)
 
-    developer.assign_application_groups(team_id, app_id_id, group_ids)
+    if not group_ids:
+        return []  # every optional group was refused: send no assignment, as with none asked
+    try:
+        developer.assign_application_groups(team_id, app_id_id, group_ids)
+    except developer.DeveloperServicesError:
+        if identifiers:
+            raise
+        skipped(accepted)
+        return []
     return group_ids
 
 
@@ -359,12 +397,15 @@ def ensure_signing_assets(
     device_name: str = "EZSide device",
     on_step: Callable[[str], None] | None = None,
     app_groups: list[str] | None = None,
+    optional_app_groups: list[str] | None = None,
 ) -> dict[str, Any]:
     """Provision cert + device + App ID + profile and cache a signing bundle.
 
     ``app_groups`` names ``group.…`` identifiers to attach to the App ID. Ordinary
     sideloads do not need any; LiveContainer does, because a shared container is how
-    it reaches the certificate it signs guest apps with.
+    it reaches the certificate it signs guest apps with; Apple refusing one raises.
+    ``optional_app_groups`` are the ones read from the IPA: Apple refusing one skips it
+    (see :func:`_ensure_app_groups`) instead of failing the sideload.
 
     Runs under :func:`refresh.operation_lock`: it writes the signing folder, which the
     other engine process may be signing from.
@@ -389,9 +430,11 @@ def ensure_signing_assets(
     app_id_id = app_id.get("appIdId") or app_id.get("appIdPlatform") or app_id.get("identifier")
 
     group_ids: list[str] = []
-    if app_groups:
+    if app_groups or optional_app_groups:
         step("Attaching app groups\u2026")
-        group_ids = _ensure_app_groups(team_id, app_id, app_id_id, app_groups, app_name)
+        group_ids = _ensure_app_groups(
+            team_id, app_id, app_id_id, app_groups or [], app_name, optional_app_groups, step
+        )
 
     step("Fetching the provisioning profile\u2026")
     profile = developer.download_profile(team_id, app_id_id)
