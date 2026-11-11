@@ -137,7 +137,7 @@ def test_a_group_without_an_id_is_refused(portal):
 
 
 def test_no_app_groups_means_no_portal_calls(monkeypatch):
-    """An ordinary sideload must not touch any of these endpoints."""
+    """A sideload with no profile groups and no IPA groups must not touch these endpoints."""
     called: list[str] = []
     for method in (
         "enable_app_id_feature",
@@ -149,6 +149,6 @@ def test_no_app_groups_means_no_portal_calls(monkeypatch):
             developer, method, lambda *a, _m=method, **k: called.append(_m)
         )
 
-    # ensure_signing_assets only calls _ensure_app_groups when app_groups is truthy;
+    # ensure_signing_assets only calls _ensure_app_groups when it has groups to attach;
     # this asserts the guard rather than the helper.
     assert not called
