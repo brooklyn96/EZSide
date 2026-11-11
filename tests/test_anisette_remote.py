@@ -12,6 +12,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import plistlib
 import re
 import socket
 import threading
@@ -19,6 +20,7 @@ import uuid
 from typing import Any
 
 import pytest
+import requests
 from wsproto import ConnectionType, WSConnection
 from wsproto.events import (
     AcceptConnection,
@@ -29,7 +31,7 @@ from wsproto.events import (
     TextMessage,
 )
 
-from ipaside_engine import anisette, anisette_remote, paths
+from ipaside_engine import anisette, anisette_remote, developer, gsa, paths
 from ipaside_engine.anisette import AnisetteError
 from ipaside_engine.anisette_remote import RemoteAnisette
 
@@ -342,6 +344,136 @@ def test_other_header_errors_are_reported_with_the_services_words(
     service.get_headers_replies = [{"result": "GetHeadersError", "message": "something exploded"}]
     with pytest.raises(AnisetteError, match="something exploded"):
         provider.fetch()
+
+
+# --------------------------------------------------------------------------- #
+# Machine fields the service may supply (X-Apple-I-MD-LU, X-Apple-I-SRL-NO, X-Mme-Device-Id)
+# --------------------------------------------------------------------------- #
+
+MACHINE_FIELDS = ("X-Apple-I-MD-LU", "X-Apple-I-SRL-NO", "X-Mme-Device-Id")
+
+
+def _derived_machine(service: FakeService) -> dict[str, str]:
+    identifier = base64.b64decode(service.client_messages[0]["identifier"])
+    return {
+        "X-Apple-I-MD-LU": hashlib.sha256(identifier).hexdigest(),
+        "X-Apple-I-SRL-NO": "0",
+        "X-Mme-Device-Id": str(uuid.UUID(bytes=identifier)),
+    }
+
+
+def test_machine_fields_supplied_by_the_service_are_sent_exactly(
+    provider: RemoteAnisette, service: FakeService
+) -> None:
+    supplied = {
+        "X-Apple-I-MD-LU": "SERVICE-LOCAL-USER-UUID",
+        "X-Apple-I-SRL-NO": "C02SERIAL123",
+        "X-Mme-Device-Id": "SERVICE-DEVICE-ID",
+    }
+    service.get_headers_replies = [{**FakeService.headers_ok(), **supplied}]
+    headers = provider.fetch().headers
+    for name, value in supplied.items():
+        assert headers[name] == value
+    derived = _derived_machine(service)
+    assert all(headers[name] != derived[name] for name in MACHINE_FIELDS)
+
+
+def test_machine_fields_the_service_does_not_supply_keep_the_derived_values(
+    provider: RemoteAnisette, service: FakeService
+) -> None:
+    headers = provider.fetch().headers
+    derived = _derived_machine(service)
+    for name in MACHINE_FIELDS:
+        assert headers[name] == derived[name]
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["", None, 12345, ["list"], "a" + chr(13) + chr(10) + "X-Injected: yes", "a" + chr(10) + "b", "x" * (anisette_remote._MAX_FIELD + 1)],
+    ids=["empty", "null", "number", "list", "crlf", "lf", "too-long"],
+)
+@pytest.mark.parametrize("name", MACHINE_FIELDS)
+def test_an_invalid_machine_field_falls_back_to_the_derived_value_without_error(
+    provider: RemoteAnisette, service: FakeService, name: str, bad: Any
+) -> None:
+    service.get_headers_replies = [{**FakeService.headers_ok(), name: bad}]
+    headers = provider.fetch().headers
+    assert headers[name] == _derived_machine(service)[name]
+
+
+UNSAFE_MACHINE_VALUES = [
+    " lead", "trail ", " ", "tab" + chr(9) + "x", "nul" + chr(0) + "x", "ctl" + chr(31) + "x", "del" + chr(127) + "x",
+    "caf" + chr(233), "smile" + chr(0x1F600), "latin" + chr(0x100),
+]
+UNSAFE_IDS = ["leading-space", "trailing-space", "only-space", "tab", "nul", "control", "del", "latin1", "emoji", "non-latin1"]
+
+
+@pytest.mark.parametrize("bad", UNSAFE_MACHINE_VALUES, ids=UNSAFE_IDS)
+@pytest.mark.parametrize("name", MACHINE_FIELDS)
+def test_a_machine_field_that_is_not_plain_printable_ascii_falls_back(
+    provider: RemoteAnisette, service: FakeService, name: str, bad: str
+) -> None:
+    service.get_headers_replies = [{**FakeService.headers_ok(), name: bad}]
+    assert provider.fetch().headers[name] == _derived_machine(service)[name]
+
+
+def test_a_machine_field_with_inner_spaces_and_punctuation_is_accepted(
+    provider: RemoteAnisette, service: FakeService
+) -> None:
+    supplied = {"X-Apple-I-SRL-NO": "C02 SER-IAL_1.2/3", "X-Mme-Device-Id": "~!@ #$%^&*() {}|:<>?"}
+    service.get_headers_replies = [{**FakeService.headers_ok(), **supplied}]
+    headers = provider.fetch().headers
+    assert all(headers[name] == value for name, value in supplied.items())
+
+
+@pytest.mark.parametrize("hostile", [False, True], ids=["supplied", "hostile-fall-back"])
+def test_fetched_headers_survive_the_sign_in_request_and_plist(
+    provider: RemoteAnisette, service: FakeService, hostile: bool
+) -> None:
+    # What the sign-in code does with the headers: requests validates them when it prepares a
+    # request (gsa._gsa_http_once / developer._request), gsa._cpd puts them in the plist body
+    # that plistlib.dumps serializes, and developer._headers merges them into its own.
+    if hostile:
+        bad = {name: "x" + chr(0) + chr(0x1F600) for name in MACHINE_FIELDS}
+        bad["X-Mme-Device-Id"] = " " + chr(0x100)
+        service.get_headers_replies = [{**FakeService.headers_ok(), **bad}]
+    else:
+        service.get_headers_replies = [
+            {**FakeService.headers_ok(), "X-Apple-I-MD-LU": "LU 1", "X-Apple-I-SRL-NO": "SER 1", "X-Mme-Device-Id": "DEV 1"}
+        ]
+    headers = provider.fetch().headers
+    if hostile:
+        assert {name: headers[name] for name in MACHINE_FIELDS} == _derived_machine(service)
+
+    prepared = requests.Request("POST", "https://gsa.example/", headers=headers, data=b"x").prepare()
+    assert all(prepared.headers[name] == headers[name] for name in MACHINE_FIELDS)
+    merged = developer._headers({"adsid": "1", "auth_token": "t"}, headers)
+    requests.Request("POST", "https://dev.example/", headers=merged).prepare()
+    body = plistlib.loads(plistlib.dumps({"Request": {"cpd": gsa._cpd(headers)}}))
+    assert all(body["Request"]["cpd"][name] == headers[name] for name in MACHINE_FIELDS)
+
+
+def test_a_value_of_exactly_the_maximum_length_is_accepted(provider: RemoteAnisette, service: FakeService) -> None:
+    longest = "y" * anisette_remote._MAX_FIELD
+    service.get_headers_replies = [{**FakeService.headers_ok(), "X-Mme-Device-Id": longest}]
+    assert provider.fetch().headers["X-Mme-Device-Id"] == longest
+
+
+def test_each_machine_field_falls_back_on_its_own(provider: RemoteAnisette, service: FakeService) -> None:
+    service.get_headers_replies = [
+        {**FakeService.headers_ok(), "X-Apple-I-MD-LU": "SERVICE-LU", "X-Apple-I-SRL-NO": ""}
+    ]
+    headers = provider.fetch().headers
+    derived = _derived_machine(service)
+    assert headers["X-Apple-I-MD-LU"] == "SERVICE-LU"  # supplied
+    assert headers["X-Apple-I-SRL-NO"] == derived["X-Apple-I-SRL-NO"]  # invalid -> "0"
+    assert headers["X-Mme-Device-Id"] == derived["X-Mme-Device-Id"]  # absent -> derived
+
+    service.get_headers_replies = [{**FakeService.headers_ok(), "X-Mme-Device-Id": "SERVICE-DEVICE"}]
+    headers = provider.fetch().headers
+    assert headers["X-Mme-Device-Id"] == "SERVICE-DEVICE"
+    assert headers["X-Apple-I-MD-LU"] == derived["X-Apple-I-MD-LU"]
+    assert headers["X-Apple-I-SRL-NO"] == "0"
 
 
 # --------------------------------------------------------------------------- #

@@ -396,6 +396,21 @@ def _clean_header_value(name: str, value: Any) -> str:
     return value
 
 
+def _optional_header_value(name: str, value: Any) -> str | None:
+    """A machine field a service may supply, or None when it did not.
+
+    Absent is not an error here: the built-in servers send only the three data fields, and
+    the caller falls back to the values it derives itself. A value is taken only if it is
+    printable ASCII with no leading or trailing space: anything else (controls, NUL, non-ASCII)
+    would break the later HTTP header or sign-in plist, so it also falls back.
+    """
+    try:
+        value = _clean_header_value(name, value)
+    except _Unavailable:
+        return None
+    return value if value.isascii() and value.isprintable() and value == value.strip() else None
+
+
 def _parse_identity(raw: Any) -> ClientIdentity:
     if not isinstance(raw, dict):
         raise _Unavailable("client_info was not a JSON object")
@@ -543,14 +558,23 @@ class RemoteAnisette:
             raise AnisetteError(f"The anisette service could not make headers: {message[:300]}")
         if result != "Headers":
             raise _Unavailable("get_headers returned an unknown result")
+        # The v3 reply may carry the machine the anisette data belongs to: the local user
+        # UUID, the serial and the device identifier. Apple ties a session to them, so when
+        # a service supplies them we must send exactly those - inventing our own leaves the
+        # headers describing a different machine than the one that provisioned the data, and
+        # Apple invalidates the session later even though the first sign-in succeeded. The
+        # built-in servers do not send them, so the old values remain the fallback.
         headers = {
             "X-Apple-I-Client-Time": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
             "X-Apple-I-MD": _clean_header_value("X-Apple-I-MD", data.get("X-Apple-I-MD")),
-            "X-Apple-I-MD-LU": state.md_lu,
+            "X-Apple-I-MD-LU": _optional_header_value("X-Apple-I-MD-LU", data.get("X-Apple-I-MD-LU"))
+            or state.md_lu,
             "X-Apple-I-MD-M": _clean_header_value("X-Apple-I-MD-M", data.get("X-Apple-I-MD-M")),
             "X-Apple-I-MD-RINFO": _clean_header_value("X-Apple-I-MD-RINFO", data.get("X-Apple-I-MD-RINFO")),
-            "X-Apple-I-SRL-NO": "0",
-            "X-Mme-Device-Id": state.device_id,
+            "X-Apple-I-SRL-NO": _optional_header_value("X-Apple-I-SRL-NO", data.get("X-Apple-I-SRL-NO"))
+            or "0",
+            "X-Mme-Device-Id": _optional_header_value("X-Mme-Device-Id", data.get("X-Mme-Device-Id"))
+            or state.device_id,
         }
         return Fetched(headers=headers, identity=identity, server=server)
 
