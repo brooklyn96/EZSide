@@ -4,6 +4,17 @@ All notable changes to iPASide are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.1] - 2026-11-12
+
+### Fixed
+
+- **A self-hosted anisette server can name its machine.** When the v3 service's `get_headers`
+  reply carries `X-Apple-I-MD-LU`, `X-Apple-I-SRL-NO` or `X-Mme-Device-Id`, EZSide now sends
+  those values instead of its own. The headers then describe the machine that made the anisette
+  data, and Apple does not invalidate the session later. EZSide accepts only plain printable
+  ASCII values. A missing or unusable value falls back to the value EZSide derives itself. The
+  public servers send none of these fields, so nothing changes for them.
+
 ## [1.5.0] - 2026-11-12
 
 ### Added
