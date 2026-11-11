@@ -4,6 +4,38 @@ All notable changes to iPASide are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/) and
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [1.5.0] - 2026-11-12
+
+### Added
+
+- **Sign with a certificate you bought.** The Account page can import a signing certificate from a
+  third-party seller: the `.p12` file, its password and the `.mobileprovision` that lists your
+  iPhone. New sideloads to an iPhone in that profile are signed with it, without an Apple ID and
+  without the 7-day limit. Apps then last until the certificate or the profile expires. The
+  Sideload screen shows which signer will be used. "Use my Apple ID instead" signs one app with
+  the Apple ID. LiveContainer always uses the Apple ID. If the iPhone is not in the profile,
+  EZSide uses the Apple ID and says so.
+- **Expiry warning and re-sign.** Auto-refresh warns, at most once every 20 hours, when apps signed
+  with the imported certificate have 14 days or less left. After you import a replacement
+  certificate, "Re-sign all apps with this certificate" re-signs them in one go. If the new
+  certificate belongs to another team, iOS cannot update the app in place: EZSide stops and asks
+  you to delete the app first, because its data will be lost. If the new certificate cannot sign
+  the app (expired, the iPhone is not in it, or the App ID does not match), EZSide gives that
+  reason instead.
+- **Refresh leaves these apps alone.** Refresh and auto-refresh never re-sign an app that was
+  signed with the imported certificate. Only the Re-sign button does that.
+
+### Security
+
+- The certificate is re-exported with a random password and stored under Windows DPAPI in the
+  data folder. The seller's password is never stored.
+- zsign never receives the long-lived certificate password. Each signing run uses a temporary copy
+  with a one-time password. The copy lives in `signing-temp` in the data folder and is deleted
+  after the run. A copy left by a crash is removed by the next signing run or by Remove.
+- A crash during import or removal leaves nothing usable. The next status read cleans up the
+  leftovers without waiting for other operations.
+- Import, Remove and Re-sign answer at once when another operation is running. They do not wait.
+
 ## [1.4.1] - 2026-11-11
 
 ### Changed

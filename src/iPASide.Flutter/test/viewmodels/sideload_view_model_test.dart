@@ -26,6 +26,10 @@ class _FakeRunner with EngineCommandRunner {
   /// while a run is past its click but not yet at the engine.
   Completer<void>? loginHold;
 
+  /// Parks `cert-status` until completed, so a test can move the selection while
+  /// the certificate is still being asked about.
+  Completer<void>? certificateHold;
+
   void always(String command, Object outcome) => _defaults[command] = outcome;
 
   void next(String command, Object outcome) =>
@@ -44,6 +48,7 @@ class _FakeRunner with EngineCommandRunner {
   }) async {
     calls.add(args);
     if (args.first == 'login') await loginHold?.future;
+    if (args.first == 'cert-status') await certificateHold?.future;
 
     final String command = args.first;
     final Queue<Object>? queued = _scripted[command];
@@ -90,6 +95,12 @@ class _FakePicker implements FilePickerService {
   @override
   Future<String?> savePairingFile({required String suggestedName}) async =>
       null;
+
+  @override
+  Future<String?> pickCertificate() async => null;
+
+  @override
+  Future<String?> pickProvisioningProfile() async => null;
 }
 
 /// An in-memory settings store: nothing here touches the real settings file, and
@@ -125,6 +136,27 @@ EngineResult get _authenticated =>
 
 EngineResult get _installed =>
     _ok(<String, dynamic>{'status': 'installed', 'name': 'Example'});
+
+/// `cert-status` with an imported certificate expiring [expiresIn] from now,
+/// whose profile does ([deviceOk] true) or does not list the iPhone asked about.
+EngineResult _certificate({
+  bool deviceOk = true,
+  Duration expiresIn = const Duration(days: 100, hours: 12),
+}) =>
+    _ok(<String, dynamic>{
+      'status': 'ok',
+      'certificate': <String, dynamic>{
+        'name': 'iPhone Distribution: Seller Ltd',
+        'team_id': 'SELLER1234',
+        'expires': DateTime.now().toUtc().add(expiresIn).toIso8601String(),
+        'app_id': 'SELLER1234.*',
+        'wildcard': true,
+        'device_ok': deviceOk,
+      },
+    });
+
+EngineResult get _noCertificate =>
+    _ok(<String, dynamic>{'status': 'ok', 'certificate': null});
 
 /// A selection that has enumerated nothing, so it names no target.
 DeviceSelection _noDevice() {
@@ -514,6 +546,412 @@ void main() {
       await vm.sideload();
 
       expect(runner.calls, isEmpty);
+    });
+  });
+
+  group('SideloadViewModel imported certificate', () {
+    EngineResult signedOut() =>
+        _ok(<String, dynamic>{'authenticated': false});
+
+    /// Two phones listed, AAAA1111 selected.
+    Future<DeviceSelection> twoPhones() async {
+      final DeviceSelection devices = DeviceSelection(
+        engine: EngineApi(
+          _FakeRunner()
+            ..always(
+              'devices',
+              _ok(<dynamic>[
+                <String, dynamic>{'serial': 'AAAA1111', 'connection_type': 'USB'},
+                <String, dynamic>{'serial': 'BBBB2222', 'connection_type': 'USB'},
+              ]),
+            ),
+        ),
+        settings: _FakeSettings(),
+      );
+      addTearDown(devices.dispose);
+      await devices.refresh();
+      return devices;
+    }
+
+    test('is read for the selected iPhone when the screen opens', () async {
+      final _FakeRunner runner = _FakeRunner();
+      final SideloadViewModel vm =
+          await _withIpa(runner, devices: await _device('BBBB2222'));
+      expect(runner.callsTo('cert-status'), isEmpty,
+          reason: 'nothing is asked before the screen opens');
+      expect(vm.hasReadCertificate, isFalse);
+
+      await vm.loadCertificate();
+
+      expect(runner.callsTo('cert-status').single,
+          <String>['cert-status', '--udid', 'BBBB2222']);
+      expect(vm.hasReadCertificate, isTrue);
+    });
+
+    test('is read again when the selected iPhone changes', () async {
+      final _FakeRunner selectionRunner = _FakeRunner()
+        ..always(
+          'devices',
+          _ok(<dynamic>[
+            <String, dynamic>{'serial': 'AAAA1111', 'connection_type': 'USB'},
+            <String, dynamic>{'serial': 'BBBB2222', 'connection_type': 'USB'},
+          ]),
+        );
+      final DeviceSelection devices = DeviceSelection(
+        engine: EngineApi(selectionRunner),
+        settings: _FakeSettings(),
+      );
+      addTearDown(devices.dispose);
+      await devices.refresh();
+
+      final _FakeRunner runner = _FakeRunner()
+        ..next('cert-status', _certificate(deviceOk: false))
+        ..next('cert-status', _certificate());
+      final SideloadViewModel vm = await _withIpa(runner, devices: devices);
+      await vm.loadCertificate();
+      expect(vm.canSignWithCertificate, isFalse);
+
+      devices.select('BBBB2222');
+      await pumpEventQueue();
+
+      expect(
+        runner.callsTo('cert-status').map((List<String> argv) => argv.last),
+        <String>['AAAA1111', 'BBBB2222'],
+      );
+      expect(vm.canSignWithCertificate, isTrue);
+    });
+
+    test('an active certificate for this iPhone sideloads without an Apple ID',
+        () async {
+      final _FakeRunner runner = _FakeRunner();
+      final NavigationState navigation = NavigationState();
+      addTearDown(navigation.dispose);
+      final SideloadViewModel vm = await _withIpa(
+        runner,
+        devices: await _device('BBBB2222'),
+        navigation: navigation,
+      );
+      runner
+        ..always('cert-status', _certificate())
+        ..always('login', signedOut());
+      await vm.loadCertificate();
+
+      expect(vm.signsWithCertificate, isTrue);
+      expect(vm.signerText, startsWith('Signing with your imported certificate (expires '));
+      expect(vm.signerText, endsWith(', 100 days)'));
+      expect(vm.certificateWarning, isNull);
+
+      await vm.sideload();
+
+      expect(runner.callsTo('login'), isEmpty);
+      expect(navigation.current, isNot(NavKey.signIn));
+      expect(runner.callsTo('sideload').single, <String>[
+        'sideload',
+        r'C:\ipas\Example.ipa',
+        '--udid',
+        'BBBB2222',
+        '--signer',
+        'custom',
+      ], reason: 'a certificate removed or expired since the read must be '
+          'refused by the engine, not swapped for the Apple ID');
+      expect(vm.isSucceeded, isTrue);
+    });
+
+    test('less than a day left says "under a day", not "0 days"', () async {
+      final _FakeRunner runner = _FakeRunner()
+        ..always(
+          'cert-status',
+          _certificate(expiresIn: const Duration(hours: 5)),
+        );
+      final SideloadViewModel vm =
+          await _withIpa(runner, devices: await _device('BBBB2222'));
+      await vm.loadCertificate();
+
+      expect(vm.signsWithCertificate, isTrue);
+      expect(vm.signerText, endsWith(', under a day)'));
+    });
+
+    test('a click asks about the clicked iPhone itself: a read still out for '
+        'another one, selected again before it answers, does not decide',
+        () async {
+      final DeviceSelection devices = await twoPhones();
+      final _FakeRunner runner = _FakeRunner()
+        // In the order asked: the screen's read for AAAA1111, then the click's
+        // own for BBBB2222.
+        ..next('cert-status', _certificate(deviceOk: false))
+        ..next('cert-status', _certificate());
+      final SideloadViewModel vm = await _withIpa(runner, devices: devices);
+      runner.always('login', signedOut());
+      runner.certificateHold = Completer<void>();
+
+      final Future<void> read = vm.loadCertificate(); // for AAAA1111, still out
+      await pumpEventQueue();
+      devices.select('BBBB2222');
+      final Future<void> run = vm.sideload();
+      await pumpEventQueue();
+      devices.select('AAAA1111'); // back again before either answer
+      runner.certificateHold!.complete();
+      await run;
+      await read;
+
+      expect(
+        runner.callsTo('cert-status').map((List<String> argv) => argv.last),
+        <String>['AAAA1111', 'BBBB2222'],
+      );
+      expect(runner.callsTo('login'), isEmpty,
+          reason: 'the certificate covers BBBB2222, so no Apple ID is needed');
+      expect(runner.callsTo('sideload').single, <String>[
+        'sideload',
+        r'C:\ipas\Example.ipa',
+        '--udid',
+        'BBBB2222',
+        '--signer',
+        'custom',
+      ]);
+      expect(vm.isSucceeded, isTrue);
+    });
+
+    test('the answer shown for another iPhone does not skip the sign-in check: '
+        'the click waits for its own', () async {
+      final DeviceSelection devices = await twoPhones();
+      final _FakeRunner runner = _FakeRunner()
+        ..next('cert-status', _certificate())
+        ..always('cert-status', _certificate(deviceOk: false));
+      final SideloadViewModel vm = await _withIpa(runner, devices: devices);
+      await vm.loadCertificate(); // for AAAA1111
+      expect(vm.signsWithCertificate, isTrue);
+
+      runner.certificateHold = Completer<void>();
+      devices.select('BBBB2222');
+      await pumpEventQueue();
+
+      final Future<void> run = vm.sideload();
+      await pumpEventQueue();
+      expect(runner.callsTo('login'), isEmpty,
+          reason: 'nothing is decided before the answer about BBBB2222');
+      expect(runner.callsTo('sideload'), isEmpty);
+      expect(vm.isRunning, isTrue);
+
+      runner.certificateHold!.complete();
+      await run;
+
+      expect(runner.callsTo('login'), hasLength(1));
+      expect(runner.callsTo('sideload').single, <String>[
+        'sideload',
+        r'C:\ipas\Example.ipa',
+        '--udid',
+        'BBBB2222',
+      ]);
+    });
+
+    test('a click whose certificate read fails checks sign-in and lets the '
+        'engine choose', () async {
+      final _FakeRunner runner = _FakeRunner();
+      final SideloadViewModel vm =
+          await _withIpa(runner, devices: await _device('BBBB2222'));
+      runner.always('cert-status', EngineException('engine busy'));
+
+      await vm.sideload();
+
+      expect(runner.callsTo('cert-status').single,
+          <String>['cert-status', '--udid', 'BBBB2222']);
+      expect(runner.callsTo('login'), hasLength(1));
+      expect(runner.callsTo('sideload').single, <String>[
+        'sideload',
+        r'C:\ipas\Example.ipa',
+        '--udid',
+        'BBBB2222',
+      ]);
+      expect(vm.isSucceeded, isTrue);
+    });
+
+    test('the signer line says it is checking while the newly selected iPhone '
+        'is being asked about', () async {
+      final DeviceSelection devices = await twoPhones();
+      final _FakeRunner runner = _FakeRunner()
+        ..next('cert-status', _certificate())
+        ..next('cert-status', _certificate(deviceOk: false));
+      final SideloadViewModel vm = await _withIpa(runner, devices: devices);
+      await vm.loadCertificate(); // for AAAA1111
+      expect(vm.isCheckingCertificate, isFalse);
+
+      runner.certificateHold = Completer<void>();
+      devices.select('BBBB2222');
+      await pumpEventQueue();
+
+      expect(vm.isCheckingCertificate, isTrue);
+      expect(vm.signerText, 'Checking your imported certificate\u2026');
+      expect(vm.canSignWithCertificate, isFalse);
+      expect(vm.certificateWarning, isNull);
+
+      runner.certificateHold!.complete();
+      await pumpEventQueue();
+
+      expect(vm.isCheckingCertificate, isFalse);
+      expect(vm.signerText, 'Signing with your Apple ID (7 days)');
+      expect(vm.certificateWarning,
+          'Your imported certificate does not include this iPhone.');
+    });
+
+    test('"Use my Apple ID instead" holds for another iPhone clicked while its '
+        'read is still out', () async {
+      final DeviceSelection devices = await twoPhones();
+      final _FakeRunner runner = _FakeRunner()
+        ..always('cert-status', _certificate());
+      final SideloadViewModel vm = await _withIpa(runner, devices: devices);
+      await vm.loadCertificate(); // for AAAA1111
+      vm.useAppleId = true;
+
+      runner.certificateHold = Completer<void>();
+      devices.select('BBBB2222'); // in the certificate too, once it answers
+      await pumpEventQueue();
+
+      final Future<void> run = vm.sideload();
+      await pumpEventQueue();
+      runner.certificateHold!.complete();
+      await run;
+
+      expect(runner.callsTo('login'), hasLength(1));
+      expect(runner.callsTo('sideload').single, <String>[
+        'sideload',
+        r'C:\ipas\Example.ipa',
+        '--udid',
+        'BBBB2222',
+        '--signer',
+        'apple',
+      ], reason: 'the explicit choice never becomes auto, which would sign '
+          'with the imported certificate');
+    });
+
+    test('a change of iPhone while the read is out reads the new one', () async {
+      final DeviceSelection devices = await twoPhones();
+      final _FakeRunner runner = _FakeRunner()
+        ..next('cert-status', _certificate())
+        ..next('cert-status', _certificate(deviceOk: false));
+      final SideloadViewModel vm = await _withIpa(runner, devices: devices);
+      runner.certificateHold = Completer<void>();
+
+      final Future<void> read = vm.loadCertificate(); // for AAAA1111
+      await pumpEventQueue();
+      devices.select('BBBB2222');
+      runner.certificateHold!.complete();
+      await read;
+
+      expect(
+        runner.callsTo('cert-status').map((List<String> argv) => argv.last),
+        <String>['AAAA1111', 'BBBB2222'],
+      );
+      expect(vm.canSignWithCertificate, isFalse,
+          reason: "AAAA1111's answer must not stand for BBBB2222");
+      expect(vm.certificateWarning,
+          'Your imported certificate does not include this iPhone.');
+    });
+
+    test('"Use my Apple ID instead" sends --signer apple and checks sign-in',
+        () async {
+      final _FakeRunner runner = _FakeRunner();
+      final SideloadViewModel vm =
+          await _withIpa(runner, devices: await _device('BBBB2222'));
+      runner.always('cert-status', _certificate());
+      await vm.loadCertificate();
+
+      vm.useAppleId = true;
+
+      expect(vm.signsWithCertificate, isFalse);
+      expect(vm.signerText, 'Signing with your Apple ID (7 days)');
+
+      await vm.sideload();
+
+      expect(runner.callsTo('cert-status'), hasLength(1),
+          reason: 'the choice is made: the click asks nothing more');
+      expect(runner.callsTo('login'), hasLength(1));
+      expect(runner.callsTo('sideload').single, <String>[
+        'sideload',
+        r'C:\ipas\Example.ipa',
+        '--udid',
+        'BBBB2222',
+        '--signer',
+        'apple',
+      ]);
+    });
+
+    test('a new IPA clears "Use my Apple ID instead"', () async {
+      final _FakeRunner runner = _FakeRunner();
+      final SideloadViewModel vm =
+          await _withIpa(runner, devices: await _device('BBBB2222'));
+      runner.always('cert-status', _certificate());
+      await vm.loadCertificate();
+      vm.useAppleId = true;
+
+      await vm.loadIpa(r'C:\ipas\Other.ipa');
+
+      expect(vm.useAppleId, isFalse);
+      expect(vm.signsWithCertificate, isTrue);
+    });
+
+    test('a certificate without this iPhone says so and needs the Apple ID',
+        () async {
+      final _FakeRunner runner = _FakeRunner();
+      final NavigationState navigation = NavigationState();
+      addTearDown(navigation.dispose);
+      final SideloadViewModel vm = await _withIpa(
+        runner,
+        devices: await _device('BBBB2222'),
+        navigation: navigation,
+      );
+      runner
+        ..always('cert-status', _certificate(deviceOk: false))
+        ..always('login', signedOut());
+      await vm.loadCertificate();
+
+      expect(vm.canSignWithCertificate, isFalse);
+      expect(vm.signerText, 'Signing with your Apple ID (7 days)');
+      expect(vm.certificateWarning,
+          'Your imported certificate does not include this iPhone.');
+
+      await vm.sideload();
+
+      expect(navigation.current, NavKey.signIn);
+      expect(runner.callsTo('sideload'), isEmpty);
+    });
+
+    test('an expired certificate is the Apple ID path, without a warning',
+        () async {
+      final _FakeRunner runner = _FakeRunner();
+      final SideloadViewModel vm =
+          await _withIpa(runner, devices: await _device('BBBB2222'));
+      runner.always(
+        'cert-status',
+        _certificate(expiresIn: const Duration(days: -1)),
+      );
+      await vm.loadCertificate();
+
+      expect(vm.canSignWithCertificate, isFalse);
+      expect(vm.signerText, 'Signing with your Apple ID (7 days)');
+      expect(vm.certificateWarning, isNull);
+
+      await vm.sideload();
+
+      expect(runner.callsTo('login'), hasLength(1));
+      expect(runner.callsTo('sideload').single, isNot(contains('--signer')));
+    });
+
+    test('no certificate, or an unreadable answer, is the Apple ID path',
+        () async {
+      final _FakeRunner runner = _FakeRunner();
+      final SideloadViewModel vm =
+          await _withIpa(runner, devices: await _device('BBBB2222'));
+      runner
+        ..next('cert-status', _noCertificate)
+        ..next('cert-status', EngineException('engine busy'));
+
+      await vm.loadCertificate();
+      expect(vm.signerText, 'Signing with your Apple ID (7 days)');
+      expect(vm.certificateWarning, isNull);
+
+      await vm.loadCertificate();
+      expect(vm.hasReadCertificate, isTrue);
+      expect(vm.canSignWithCertificate, isFalse);
     });
   });
 }

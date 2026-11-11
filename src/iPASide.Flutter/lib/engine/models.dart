@@ -503,32 +503,83 @@ class RefreshEntry {
       'RefreshEntry(bundleId: $bundleId, status: $status, error: $error)';
 }
 
+/// An app signed with the imported certificate whose signature runs out soon.
+///
+/// Refresh never re-signs these (no Apple ID can extend them), so the only thing
+/// to do is warn before the certificate or its profile expires.
+class CustomExpiringApp {
+  /// Creates an expiry warning entry.
+  const CustomExpiringApp({this.bundleId, this.name, this.daysLeft});
+
+  /// Parses one element of `refresh`'s `custom_expiring`.
+  factory CustomExpiringApp.fromJson(Map<String, dynamic> json) =>
+      CustomExpiringApp(
+        bundleId: jsonString(json, 'bundle_id'),
+        name: jsonString(json, 'name'),
+        daysLeft: jsonDouble(json, 'days_left'),
+      );
+
+  final String? bundleId;
+  final String? name;
+
+  /// Days until it stops opening; null when the engine reported nothing readable.
+  final double? daysLeft;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CustomExpiringApp &&
+          other.bundleId == bundleId &&
+          other.name == name &&
+          other.daysLeft == daysLeft;
+
+  @override
+  int get hashCode => Object.hash(bundleId, name, daysLeft);
+
+  @override
+  String toString() =>
+      'CustomExpiringApp(bundleId: $bundleId, daysLeft: $daysLeft)';
+}
+
 /// Result of `refresh`.
 ///
 /// The engine returns `ok: true` even when individual apps fail, so callers
 /// MUST inspect [refreshed].
 class RefreshSummary {
   /// Creates a refresh summary.
-  const RefreshSummary({this.refreshed = const <RefreshEntry>[]});
+  const RefreshSummary({
+    this.refreshed = const <RefreshEntry>[],
+    this.customExpiring = const <CustomExpiringApp>[],
+  });
 
   /// Parses a `refresh` payload.
   factory RefreshSummary.fromJson(Map<String, dynamic> json) => RefreshSummary(
         refreshed: jsonObjectList(json, 'refreshed', RefreshEntry.fromJson),
+        customExpiring:
+            jsonObjectList(json, 'custom_expiring', CustomExpiringApp.fromJson),
       );
 
   /// One entry per app the run touched. Read-only.
   final List<RefreshEntry> refreshed;
 
+  /// Apps on the imported certificate that expire within the warning window.
+  /// Read-only.
+  final List<CustomExpiringApp> customExpiring;
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is RefreshSummary && _listEquals(other.refreshed, refreshed);
+      other is RefreshSummary &&
+          _listEquals(other.refreshed, refreshed) &&
+          _listEquals(other.customExpiring, customExpiring);
 
   @override
-  int get hashCode => Object.hashAll(refreshed);
+  int get hashCode =>
+      Object.hash(Object.hashAll(refreshed), Object.hashAll(customExpiring));
 
   @override
-  String toString() => 'RefreshSummary(refreshed: $refreshed)';
+  String toString() =>
+      'RefreshSummary(refreshed: $refreshed, customExpiring: $customExpiring)';
 }
 
 /// Result of `sideload` (status is `installed` on success).
@@ -855,6 +906,178 @@ class RevokedCertificate {
   @override
   String toString() => 'RevokedCertificate(serial: $serial, '
       'invalidatesLocalApps: $invalidatesLocalApps)';
+}
+
+/// A certificate bought from a seller and imported: a `.p12` plus the
+/// `.mobileprovision` that lists the iPhone.
+///
+/// While it is active every new sideload is signed with it instead of an Apple ID,
+/// and the apps last until [expires]. Its password is never part of this.
+class ImportedCertificate {
+  /// Creates an imported-certificate description.
+  const ImportedCertificate({
+    this.name,
+    this.teamId,
+    this.teamName,
+    this.serial,
+    this.fingerprint,
+    this.certificateExpires,
+    this.profileName,
+    this.profileExpires,
+    this.expires,
+    this.appId,
+    this.wildcard = false,
+    this.allDevices = false,
+    this.deviceCount = 0,
+    this.importedAt,
+    this.deviceOk,
+  });
+
+  /// Parses the engine's certificate `info` object.
+  factory ImportedCertificate.fromJson(Map<String, dynamic> json) {
+    final Object? deviceOk = json['device_ok'];
+    return ImportedCertificate(
+      name: jsonString(json, 'name'),
+      teamId: jsonString(json, 'team_id'),
+      teamName: jsonString(json, 'team_name'),
+      serial: jsonString(json, 'serial'),
+      fingerprint: jsonString(json, 'fingerprint'),
+      certificateExpires: jsonDateTime(json, 'certificate_expires'),
+      profileName: jsonString(json, 'profile_name'),
+      profileExpires: jsonDateTime(json, 'profile_expires'),
+      expires: jsonDateTime(json, 'expires'),
+      appId: jsonString(json, 'app_id'),
+      wildcard: jsonBool(json, 'wildcard'),
+      allDevices: jsonBool(json, 'all_devices'),
+      deviceCount: jsonInt(json, 'device_count'),
+      importedAt: jsonDateTime(json, 'imported_at'),
+      deviceOk: deviceOk is bool ? deviceOk : null,
+    );
+  }
+
+  /// The certificate's common name, e.g. `iPhone Distribution: Seller Ltd`.
+  final String? name;
+
+  final String? teamId;
+  final String? teamName;
+
+  /// Uppercase hex.
+  final String? serial;
+
+  /// SHA-1 of the certificate, lowercase hex: what tells one certificate from its
+  /// replacement.
+  final String? fingerprint;
+
+  final DateTime? certificateExpires;
+  final String? profileName;
+  final DateTime? profileExpires;
+
+  /// The earlier of the certificate's and the profile's expiry: when apps signed
+  /// with it stop opening.
+  final DateTime? expires;
+
+  /// The profile's application identifier, e.g. `TEAMID.*`.
+  final String? appId;
+
+  /// Whether [appId] ends in a wildcard, so apps keep their own bundle id.
+  final bool wildcard;
+
+  /// Whether the profile covers every device rather than a list.
+  final bool allDevices;
+
+  /// How many devices the profile lists.
+  final int deviceCount;
+
+  final DateTime? importedAt;
+
+  /// Whether the iPhone asked about is in the profile; null when none was asked about.
+  final bool? deviceOk;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ImportedCertificate &&
+          other.name == name &&
+          other.teamId == teamId &&
+          other.teamName == teamName &&
+          other.serial == serial &&
+          other.fingerprint == fingerprint &&
+          other.certificateExpires == certificateExpires &&
+          other.profileName == profileName &&
+          other.profileExpires == profileExpires &&
+          other.expires == expires &&
+          other.appId == appId &&
+          other.wildcard == wildcard &&
+          other.allDevices == allDevices &&
+          other.deviceCount == deviceCount &&
+          other.importedAt == importedAt &&
+          other.deviceOk == deviceOk;
+
+  @override
+  int get hashCode => Object.hash(
+        name,
+        teamId,
+        teamName,
+        serial,
+        fingerprint,
+        certificateExpires,
+        profileName,
+        profileExpires,
+        expires,
+        appId,
+        wildcard,
+        allDevices,
+        deviceCount,
+        importedAt,
+        deviceOk,
+      );
+
+  @override
+  String toString() => 'ImportedCertificate(name: $name, team: $teamId, '
+      'expires: $expires, deviceOk: $deviceOk)';
+}
+
+/// One app's outcome from re-signing everything with the imported certificate.
+class CertificateResignResult {
+  /// Creates a per-app re-sign outcome.
+  const CertificateResignResult({
+    this.bundleId,
+    this.name,
+    this.ok = false,
+    this.error,
+  });
+
+  /// Parses one element of `cert-resign`'s `results`.
+  factory CertificateResignResult.fromJson(Map<String, dynamic> json) =>
+      CertificateResignResult(
+        bundleId: jsonString(json, 'bundle_id'),
+        name: jsonString(json, 'name'),
+        ok: jsonBool(json, 'ok'),
+        error: jsonString(json, 'error'),
+      );
+
+  final String? bundleId;
+  final String? name;
+  final bool ok;
+
+  /// Why it failed; only meaningful when [ok] is false.
+  final String? error;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is CertificateResignResult &&
+          other.bundleId == bundleId &&
+          other.name == name &&
+          other.ok == ok &&
+          other.error == error;
+
+  @override
+  int get hashCode => Object.hash(bundleId, name, ok, error);
+
+  @override
+  String toString() =>
+      'CertificateResignResult(bundleId: $bundleId, ok: $ok, error: $error)';
 }
 
 /// One app running inside LiveContainer rather than installed on the phone.
@@ -1971,6 +2194,7 @@ class SideloadOptions {
     this.keepSigned = false,
     this.signedDirectory,
     this.dylibs = const <String>[],
+    this.signer = 'auto',
   });
 
   /// The device to install to. Null leaves the choice to the engine, which
@@ -2009,6 +2233,10 @@ class SideloadOptions {
   /// Resolved dylib paths to inject. Read-only.
   final List<String> dylibs;
 
+  /// What signs it: `auto` (the imported certificate when one is active, else the
+  /// Apple ID), `apple` or `custom`.
+  final String signer;
+
   /// Returns a copy with the given fields replaced.
   ///
   /// Passing null for [udid], [bundleId], [name] or [signedDirectory] keeps the
@@ -2026,6 +2254,7 @@ class SideloadOptions {
     bool? keepSigned,
     String? signedDirectory,
     List<String>? dylibs,
+    String? signer,
   }) =>
       SideloadOptions(
         udid: udid ?? this.udid,
@@ -2040,6 +2269,7 @@ class SideloadOptions {
         keepSigned: keepSigned ?? this.keepSigned,
         signedDirectory: signedDirectory ?? this.signedDirectory,
         dylibs: dylibs ?? this.dylibs,
+        signer: signer ?? this.signer,
       );
 
   @override
@@ -2056,7 +2286,8 @@ class SideloadOptions {
           other.weakDylibs == weakDylibs &&
           other.keepSigned == keepSigned &&
           other.signedDirectory == signedDirectory &&
-          _listEquals(other.dylibs, dylibs);
+          _listEquals(other.dylibs, dylibs) &&
+          other.signer == signer;
 
   @override
   int get hashCode => Object.hash(
@@ -2071,6 +2302,7 @@ class SideloadOptions {
         keepSigned,
         signedDirectory,
         Object.hashAll(dylibs),
+        signer,
       );
 
   @override
@@ -2081,7 +2313,7 @@ class SideloadOptions {
       'removeDeviceRestrictions: $removeDeviceRestrictions, '
       'enableFileSharing: $enableFileSharing, weakDylibs: $weakDylibs, '
       'keepSigned: $keepSigned, signedDirectory: $signedDirectory, '
-      'dylibs: $dylibs)';
+      'dylibs: $dylibs, signer: $signer)';
 }
 
 /// A parsed sideload progress event.

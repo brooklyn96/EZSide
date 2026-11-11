@@ -1346,4 +1346,172 @@ void main() {
           .logout();
     });
   });
+
+  group('EngineApi imported certificate', () {
+    const Map<String, dynamic> info = <String, dynamic>{
+      'name': 'iPhone Distribution: Seller Ltd',
+      'team_id': 'SELLER1234',
+      'team_name': 'Seller Ltd',
+      'serial': '0A1B2C',
+      'fingerprint': 'ab12',
+      'certificate_expires': '2027-11-01T00:00:00Z',
+      'profile_name': 'Seller Ad Hoc',
+      'profile_expires': '2027-10-01T00:00:00Z',
+      'expires': '2027-10-01T00:00:00Z',
+      'app_id': 'SELLER1234.*',
+      'wildcard': true,
+      'all_devices': false,
+      'device_count': 12,
+      'imported_at': '2026-11-11T10:00:00Z',
+    };
+
+    test('the sideload signer is named only when it is not automatic', () {
+      expect(
+        EngineApi.buildSideloadArgs('app.ipa', const SideloadOptions()),
+        isNot(contains('--signer')),
+      );
+      expect(
+        EngineApi.buildSideloadArgs(
+          'app.ipa',
+          const SideloadOptions(signer: 'apple'),
+        ),
+        <String>['sideload', 'app.ipa', '--signer', 'apple'],
+      );
+    });
+
+    test('import sends the password via env, never argv', () async {
+      final _FakeRunner runner = _FakeRunner(
+        result: const EngineResult(
+          ok: true,
+          data: <String, dynamic>{'status': 'ok', 'certificate': info},
+        ),
+      );
+
+      final ImportedCertificate imported = await EngineApi(runner)
+          .importCertificate(r'C:\c\cert.p12', 'p12-s3cret', r'C:\c\p.mobileprovision');
+
+      expect(runner.lastArgs, <String>[
+        'cert-import',
+        '--p12',
+        r'C:\c\cert.p12',
+        '--profile',
+        r'C:\c\p.mobileprovision',
+      ]);
+      expect(runner.lastArgs, isNot(contains('p12-s3cret')));
+      expect(
+        runner.lastEnv,
+        <String, String>{'IPASIDE_CERT_PASSWORD': 'p12-s3cret'},
+      );
+      expect(imported.teamId, 'SELLER1234');
+      expect(imported.wildcard, isTrue);
+    });
+
+    test('status asks about the phone and reads nothing imported as null', () async {
+      final _FakeRunner runner = _FakeRunner(
+        result: const EngineResult(
+          ok: true,
+          data: <String, dynamic>{'status': 'ok', 'certificate': null},
+        ),
+      );
+      final EngineApi api = EngineApi(runner);
+
+      expect(await api.certificateStatus(udid: 'UDID1'), isNull);
+      expect(runner.lastArgs, <String>['cert-status', '--udid', 'UDID1']);
+
+      runner.result = const EngineResult(
+        ok: true,
+        data: <String, dynamic>{
+          'status': 'ok',
+          'certificate': <String, dynamic>{...info, 'device_ok': false},
+        },
+      );
+      final ImportedCertificate? status = await api.certificateStatus();
+      expect(runner.lastArgs, <String>['cert-status']);
+      expect(status?.deviceOk, isFalse);
+    });
+
+    test('remove reports whether there was one', () async {
+      final _FakeRunner runner = _FakeRunner(
+        result: const EngineResult(
+          ok: true,
+          data: <String, dynamic>{'status': 'ok', 'removed': true},
+        ),
+      );
+
+      expect(await EngineApi(runner).removeCertificate(), isTrue);
+      expect(runner.lastArgs, <String>['cert-remove']);
+    });
+
+    test('re-sign keeps the per-app list even when one app failed', () async {
+      // The engine exits 1 when any app failed, but the list is the answer.
+      final _FakeRunner runner = _FakeRunner(
+        result: const EngineResult(
+          ok: false,
+          error: 'Engine exited with code 1.',
+          data: <String, dynamic>{
+            'status': 'ok',
+            'results': <dynamic>[
+              <String, dynamic>{'bundle_id': 'com.a', 'name': 'A', 'ok': true},
+              <String, dynamic>{
+                'bundle_id': 'com.b',
+                'name': 'B',
+                'ok': false,
+                'error': 'Phone locked',
+              },
+            ],
+          },
+        ),
+        progress: <String>[
+          '{"event":"progress","phase":"sign","step":"Signing","bundle_id":"com.a"}',
+        ],
+      );
+      final List<SideloadProgress> seen = <SideloadProgress>[];
+
+      final List<CertificateResignResult> results = await EngineApi(runner)
+          .resignWithCertificate(udid: 'UDID1', onProgress: seen.add);
+
+      expect(runner.lastArgs, <String>['cert-resign', '--udid', 'UDID1']);
+      expect(results, hasLength(2));
+      expect(results.last.ok, isFalse);
+      expect(results.last.error, 'Phone locked');
+      expect(seen.single.bundleId, 'com.a');
+    });
+
+    test('a re-sign that never got to the apps still throws', () async {
+      final _FakeRunner runner = _FakeRunner(
+        result: const EngineResult(
+          ok: false,
+          data: <String, dynamic>{
+            'status': 'error',
+            'error': 'No certificate is imported.',
+          },
+        ),
+      );
+
+      await expectLater(
+        EngineApi(runner).resignWithCertificate(),
+        _failsWith('No certificate is imported.'),
+      );
+    });
+
+    test('refresh reads the imported-certificate apps that expire soon', () async {
+      final _FakeRunner runner = _FakeRunner(
+        result: const EngineResult(
+          ok: true,
+          data: <String, dynamic>{
+            'refreshed': <dynamic>[],
+            'custom_expiring': <dynamic>[
+              <String, dynamic>{'bundle_id': 'com.a', 'name': 'A', 'days_left': 9.5},
+            ],
+          },
+        ),
+      );
+
+      final RefreshSummary summary = await EngineApi(runner).refresh();
+
+      expect(summary.customExpiring.single.bundleId, 'com.a');
+      expect(summary.customExpiring.single.name, 'A');
+      expect(summary.customExpiring.single.daysLeft, 9.5);
+    });
+  });
 }

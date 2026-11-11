@@ -33,6 +33,11 @@ import 'settings_store.dart';
 /// [guiIsRunning]) the box is skipped and the stamp left alone: the GUI watches
 /// the log and shows the notice itself.
 ///
+/// Apps signed with the imported certificate are never refreshed; when the
+/// engine reports some of them close to expiry ([RefreshSummary.customExpiring])
+/// the same box also warns about them ([expiryText]), at most once per 20 hours
+/// on its own stamp, GUI open or not. The warning never changes the exit code.
+///
 /// [run] must be awaited before any window is created, and its result passed to
 /// `exit`.
 abstract final class AutoRefreshRunner {
@@ -79,6 +84,7 @@ abstract final class AutoRefreshRunner {
     final List<String> lines = <String>[];
     int exitCode = 0;
     int failedApps = 0;
+    List<CustomExpiringApp> expiring = const <CustomExpiringApp>[];
 
     try {
       appPaths.ensureRootExists();
@@ -105,6 +111,9 @@ abstract final class AutoRefreshRunner {
           // rather than reported; only a real failure counts below.
           unattended: true,
         );
+        // Apps on the imported certificate are never refreshed; the engine only
+        // reports the ones close to stopping, and only the user can fix that.
+        expiring = summary.customExpiring;
         if (summary.refreshed.isEmpty) {
           lines.add(AutoRefreshLog.formatNothingToRefresh(now()));
         } else {
@@ -132,11 +141,19 @@ abstract final class AutoRefreshRunner {
       // box every hour; the log above still records every run. With the GUI
       // open it shows the notice (from this same log), so this run stays quiet
       // and, above all, leaves the stamp for the GUI to claim.
-      if (exitCode != 0 &&
+      final bool showFailure = exitCode != 0 &&
           !guiRunning() &&
-          claimNotice(paths: appPaths, now: now())) {
+          claimNotice(paths: appPaths, now: now());
+      // Its own stamp, so a failure notice and this warning never silence each
+      // other, and shown with the GUI open too: the GUI does not raise it itself.
+      final bool showExpiry = expiring.isNotEmpty &&
+          _claimStamp(_expiryStampPath(appPaths), now());
+      if (showFailure || showExpiry) {
         try {
-          notice('EZSide', failureText(failedApps));
+          notice('EZSide', <String>[
+            if (showFailure) failureText(failedApps),
+            if (showExpiry) expiryText(expiring),
+          ].join('\n\n'));
         } catch (_) {
           // The log already holds the failure; a notice that cannot be shown
           // must not change the exit code.
@@ -175,10 +192,64 @@ abstract final class AutoRefreshRunner {
   /// notice shown yet": a notice that is shown twice is better than one that is
   /// never shown. Never throws, so it cannot change the exit code. [paths]
   /// defaults to [AppPaths.instance], [now] to the clock.
-  static bool claimNotice({AppPaths? paths, DateTime? now}) {
-    final String stampPath =
-        (paths ?? AppPaths.instance).autoRefreshNoticeStampPath;
-    final DateTime at = now ?? DateTime.now();
+  static bool claimNotice({AppPaths? paths, DateTime? now}) => _claimStamp(
+        (paths ?? AppPaths.instance).autoRefreshNoticeStampPath,
+        now ?? DateTime.now(),
+      );
+
+  /// The English + Vietnamese warning that apps signed with the imported
+  /// certificate are about to stop opening (or already have), one line per app
+  /// with its days left, ending with the steps that fix it: a new certificate,
+  /// then a re-sign, since the apps keep the old date until they are re-signed.
+  static String expiryText(List<CustomExpiringApp> apps) {
+    String days(CustomExpiringApp app, {required bool english}) {
+      final double? left = app.daysLeft;
+      if (left == null) return english ? 'soon' : 'sắp hết hạn';
+      if (left <= 0) return english ? 'expired' : 'đã hết hạn';
+      final int whole = left.floor();
+      if (whole < 1) return english ? 'under a day left' : 'còn chưa tới 1 ngày';
+      return english
+          ? '$whole day${whole == 1 ? '' : 's'} left'
+          : 'còn $whole ngày';
+    }
+
+    String list({required bool english}) => apps
+        .map((CustomExpiringApp app) =>
+            '- ${app.name ?? app.bundleId ?? '?'}: ${days(app, english: english)}')
+        .join('\n');
+
+    // The list also carries apps already past their date: "about to" would be
+    // wrong for those.
+    final bool anyExpired =
+        apps.any((CustomExpiringApp app) => (app.daysLeft ?? 1) <= 0);
+    final String english = anyExpired
+        ? 'Your imported certificate has expired. These apps have stopped '
+            'opening or will stop soon:'
+        : 'Your imported certificate is about to expire. These apps will stop '
+            'opening:';
+    final String vietnamese = anyExpired
+        ? 'Chứng chỉ bạn đã nhập đã hết hạn. Các ứng dụng này đã ngừng mở hoặc '
+            'sắp ngừng mở:'
+        : 'Chứng chỉ bạn đã nhập sắp hết hạn. Các ứng dụng này sẽ ngừng mở:';
+    // The Account page button, as labelled there.
+    const String resign = '"Re-sign all apps with this certificate"';
+
+    return '$english\n'
+        '${list(english: true)}\n'
+        'Renew the certificate with the seller, import the new one on the '
+        'Account page, then press $resign.\n\n'
+        '$vietnamese\n'
+        '${list(english: false)}\n'
+        'Hãy gia hạn chứng chỉ với người bán, nhập chứng chỉ mới ở trang '
+        'Account, rồi bấm $resign.';
+  }
+
+  /// Next to the failure stamp: the expiry warning is limited the same way.
+  static String _expiryStampPath(AppPaths paths) =>
+      '${File(paths.autoRefreshNoticeStampPath).parent.path}'
+      '${Platform.pathSeparator}auto-refresh-last-expiry-notice.txt';
+
+  static bool _claimStamp(String stampPath, DateTime at) {
     if (!_noticeDue(stampPath, at)) return false;
     _writeNoticeStamp(stampPath, at);
     return true;

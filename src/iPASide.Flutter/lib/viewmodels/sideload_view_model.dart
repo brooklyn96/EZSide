@@ -51,7 +51,9 @@ class SideloadViewModel extends BaseViewModel {
     required this._icons,
     required this._settings,
     required this._devices,
-  });
+  }) {
+    _devices.addListener(_onDeviceChanged);
+  }
 
   final EngineApi _engine;
   final NavigationState _navigation;
@@ -181,6 +183,99 @@ class SideloadViewModel extends BaseViewModel {
 
   List<TweakRow> get tweaks => _tweaks;
   bool get hasTweaks => _tweaks.isNotEmpty;
+
+  // ---- Signer ----
+
+  ImportedCertificate? _certificate;
+  String? _certificateUdid;
+  bool _isCertificateLoading = false;
+  bool _hasReadCertificate = false;
+  bool _useAppleId = false;
+
+  /// Whether the imported certificate has been asked about at least once, so the
+  /// signer line does not claim the Apple ID for the moment it takes to find out.
+  bool get hasReadCertificate => _hasReadCertificate;
+
+  /// "Use my Apple ID instead": signs this app with the Apple ID even though the
+  /// imported certificate could. Cleared with the other options on a new IPA.
+  bool get useAppleId => _useAppleId;
+  set useAppleId(bool value) {
+    if (_useAppleId == value) return;
+    _useAppleId = value;
+    notify();
+  }
+
+  /// Imported and not yet expired.
+  static bool _isActive(ImportedCertificate? certificate) {
+    final DateTime? expires = certificate?.expires;
+    return expires != null && expires.isAfter(DateTime.now());
+  }
+
+  /// Whether [certificate] can sign for the iPhone it was asked about: active,
+  /// and its profile lists that very phone.
+  static bool _covers(ImportedCertificate? certificate) =>
+      _isActive(certificate) && certificate!.deviceOk == true;
+
+  /// The read now out is about another iPhone than the last answer, so what the
+  /// certificate says about the selected one is not known yet.
+  bool get isCheckingCertificate =>
+      _isCertificateLoading && _certificateUdid != _devices.selectedUdid;
+
+  /// Whether the imported certificate can sign for the selected iPhone. Only an
+  /// answer about the phone selected now counts; one still being asked about is
+  /// not known yet.
+  bool get canSignWithCertificate =>
+      _certificateUdid == _devices.selectedUdid && _covers(_certificate);
+
+  /// The next sideload signs with the imported certificate, needing no Apple ID.
+  bool get signsWithCertificate => canSignWithCertificate && !_useAppleId;
+
+  /// The line above the Sideload button saying which signer will be used.
+  String get signerText {
+    if (isCheckingCertificate) return 'Checking your imported certificate\u2026';
+    if (!signsWithCertificate) return 'Signing with your Apple ID (7 days)';
+    final DateTime expires = _certificate!.expires!;
+    // inDays rounds down: the last hours are not "0 days".
+    final int days = expires.difference(DateTime.now()).inDays;
+    final String left =
+        days < 1 ? 'under a day' : '$days day${days == 1 ? '' : 's'}';
+    return 'Signing with your imported certificate '
+        '(expires ${_shortDate(expires)}, $left)';
+  }
+
+  /// Said when a certificate is active but the selected iPhone is not in it, so
+  /// the Apple ID line underneath is not a surprise.
+  String? get certificateWarning => _isActive(_certificate) &&
+          _certificateUdid == _devices.selectedUdid &&
+          _certificate!.deviceOk == false
+      ? 'Your imported certificate does not include this iPhone.'
+      : null;
+
+  /// Reads the imported certificate for the selected iPhone. Called when the
+  /// screen opens; after that a change of iPhone reads it again by itself.
+  Future<void> loadCertificate() async {
+    if (_isCertificateLoading) return;
+    _isCertificateLoading = true;
+    final String? udid = _devices.selectedUdid;
+
+    try {
+      _certificate = await _engine.certificateStatus(udid: udid);
+    } catch (error) {
+      if (BaseViewModel.isShutdown(error)) return;
+      // Unreadable counts as none: the Apple ID path, and its sign-in check,
+      // is the one that cannot surprise anybody.
+      _certificate = null;
+    } finally {
+      _certificateUdid = udid;
+      _isCertificateLoading = false;
+      _hasReadCertificate = true;
+      notify();
+    }
+    // The phone changed while that read was out: answer for the one selected now.
+    if (!isDisposed && _devices.selectedUdid != udid) {
+      await loadCertificate();
+    }
+  }
 
   // ---- Run state ----
 
@@ -313,12 +408,15 @@ class SideloadViewModel extends BaseViewModel {
     if (path == null || _inspection == null || isBlocked || _isRunning) return;
 
     // The phone the user clicked Install for, read before the first await: the
-    // selection can move while the sign-in probe is out, and this run must not
-    // follow it to another phone. Before the first enumeration there is no
-    // selection yet, and that one is waited for below.
+    // selection can move while the certificate read or the sign-in probe is out,
+    // and this run must not follow it to another phone. Before the first
+    // enumeration there is no selection yet, and that one is waited for below.
     final String? clickedUdid = _devices.selectedUdid;
     final bool loaded = _devices.hasLoaded;
     final bool wasEmpty = _devices.isEmpty;
+    // "Use my Apple ID instead" as ticked at the click. An explicit choice, so it
+    // holds whatever the certificate turns out to say about this phone.
+    final bool viaAppleId = _useAppleId;
 
     // Claimed before the first await, not after the sign-in probe below: the
     // button is disabled while a run is on, but the guard has to hold on its own,
@@ -330,18 +428,43 @@ class SideloadViewModel extends BaseViewModel {
     notify();
 
     try {
-      // Pre-flight: an unauthenticated — or unknown — session goes to sign-in.
-      LoginStatus? status;
-      try {
-        status = await _engine.loginStatus();
-      } catch (error) {
-        if (BaseViewModel.isShutdown(error)) return;
-        // A failed probe counts as signed out.
+      // The signer and the sign-in check follow this run's own question about
+      // the clicked phone, never the answer behind the signer line: that one
+      // follows the selection, which can have moved on, or back, by now.
+      bool viaCertificate = false;
+      if (!viaAppleId) {
+        try {
+          viaCertificate =
+              _covers(await _engine.certificateStatus(udid: clickedUdid));
+        } catch (error) {
+          if (BaseViewModel.isShutdown(error)) return;
+          // A failed read counts as not covered: the engine chooses, and the
+          // sign-in check below still runs.
+        }
       }
+      // The certificate is asked for by name: one removed or expired since the
+      // read gets the engine's own error, never a quiet switch to the Apple ID.
+      final String signer = viaAppleId
+          ? 'apple'
+          : viaCertificate
+              ? 'custom'
+              : 'auto';
 
-      if (status == null || !status.authenticated) {
-        _navigation.navigateTo(NavKey.signIn);
-        return;
+      // Pre-flight: an unauthenticated — or unknown — session goes to sign-in.
+      // The imported certificate needs no Apple ID, so it skips the question.
+      if (!viaCertificate) {
+        LoginStatus? status;
+        try {
+          status = await _engine.loginStatus();
+        } catch (error) {
+          if (BaseViewModel.isShutdown(error)) return;
+          // A failed probe counts as signed out.
+        }
+
+        if (status == null || !status.authenticated) {
+          _navigation.navigateTo(NavKey.signIn);
+          return;
+        }
       }
 
       // Read here rather than held as a field: this model is app-scoped, so
@@ -367,6 +490,7 @@ class SideloadViewModel extends BaseViewModel {
         keepSigned: signed.keep,
         signedDirectory: signed.directory,
         dylibs: [for (final t in _resolvedTweaks) if (t.path != null) t.path!],
+        signer: signer,
       );
 
       final result = await _engine.sideload(path, options, onProgress: _onProgress);
@@ -389,7 +513,22 @@ class SideloadViewModel extends BaseViewModel {
     }
   }
 
+  @override
+  void dispose() {
+    _devices.removeListener(_onDeviceChanged);
+    super.dispose();
+  }
+
   // ---- Internals ----
+
+  void _onDeviceChanged() {
+    // Whether the iPhone is in the profile is a question about the selected one.
+    // Nothing is asked before the screen first opens.
+    if ((_hasReadCertificate || _isCertificateLoading) &&
+        _devices.selectedUdid != _certificateUdid) {
+      loadCertificate();
+    }
+  }
 
   void _onProgress(SideloadProgress progress) {
     final SideloadProgressState next = _progress.apply(progress);
@@ -418,6 +557,7 @@ class SideloadViewModel extends BaseViewModel {
     _removeDeviceRestrictions = true;
     _enableFileSharing = false;
     _weakDylibs = false;
+    _useAppleId = false;
   }
 
   void _resetRun() {
@@ -429,6 +569,16 @@ class SideloadViewModel extends BaseViewModel {
     _isInstallComplete = false;
     _successTitle = '';
     _failureMessage = null;
+  }
+
+  /// `26 Jul 2027`, without a localisation package, as the Account page shows it.
+  static String _shortDate(DateTime when) {
+    const List<String> months = <String>[
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    final DateTime local = when.toLocal();
+    return '${local.day} ${months[local.month - 1]} ${local.year}';
   }
 
   /// Last path segment, handling both separators without pulling in a package.

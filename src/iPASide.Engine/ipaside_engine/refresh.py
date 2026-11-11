@@ -328,8 +328,26 @@ def records() -> list[dict[str, Any]]:
 
 
 def due(within_days: float = 2.0) -> list[dict[str, Any]]:
-    """Records whose profile expires within ``within_days`` (or already has)."""
+    """Apple-ID records whose profile expires within ``within_days`` (or already has).
+
+    Records signed with an imported certificate (``signer == "custom"``) are never
+    refreshed automatically - see :func:`custom_expiring` for their warning.
+    """
     return [
         r for r in records()
+        if r.get("signer") != "custom"
+        and r.get("days_left") is not None and r["days_left"] <= within_days
+    ]
+
+
+def custom_records() -> list[dict[str, Any]]:
+    """Records signed with an imported certificate, annotated like :func:`records`."""
+    return [r for r in records() if r.get("signer") == "custom"]
+
+
+def custom_expiring(within_days: float = 14.0) -> list[dict[str, Any]]:
+    """Imported-certificate records expiring within ``within_days`` (or already expired)."""
+    return [
+        r for r in custom_records()
         if r.get("days_left") is not None and r["days_left"] <= within_days
     ]

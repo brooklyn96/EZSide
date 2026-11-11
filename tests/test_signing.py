@@ -1,6 +1,15 @@
 """zsign command construction (flag mapping for the advanced options)."""
 
+import pytest
+
 from ipaside_engine import signing
+
+
+@pytest.fixture(autouse=True)
+def _no_identity_reexport(monkeypatch):
+    # These tests only check zsign's flags with made-up identity paths; the re-export of a
+    # real identity is covered by test_signing_ephemeral_p12.py.
+    monkeypatch.setattr(signing, "_ephemeral_p12", lambda p12_path, password, folder: (p12_path, password))
 
 
 class _FakeProc:

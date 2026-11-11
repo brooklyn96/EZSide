@@ -9,13 +9,16 @@ sees the private key; it lives only on this machine.
 from __future__ import annotations
 
 import os
+import secrets
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
 from cryptography import x509
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives.serialization import pkcs12
@@ -104,6 +107,68 @@ def resolve_helper_dylib() -> str | None:
     return None
 
 
+_TEMP_DIR_NAME = "signing-temp"
+
+
+def _discard(path: Path) -> None:
+    """Delete a file or folder; a failure is a warning (no secrets) and the next sign retries."""
+    try:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        print(f"signing: could not delete a temporary signing file ({type(exc).__name__})",
+              file=sys.stderr, flush=True)
+
+
+def sweep_signing_temp() -> None:
+    """Delete every leftover temporary identity from the signing-temp folder.
+
+    The engine can be killed mid-sign (closing the app force-kills it), which skips the
+    cleanup in ``sign_ipa``. Called before each sign and from ``custom_cert.remove()``; run it
+    under the operation lock so it never deletes the copy of a sign that is running.
+    """
+    try:
+        entries = list((paths.data_dir() / _TEMP_DIR_NAME).iterdir())
+    except OSError:  # no folder yet: nothing to sweep
+        return
+    for entry in entries:
+        _discard(entry)
+
+
+def _ephemeral_p12(p12_path: str, password: str, folder: Path) -> tuple[str, str]:
+    """Re-export an identity into ``folder`` under a one-time password, for zsign's argv.
+
+    A command line is readable by other processes, so the long-lived password that
+    protects the stored identity must never be passed there. The one-time password
+    guards only a short-lived copy that the caller deletes as soon as zsign exits.
+    """
+    path = Path(p12_path)
+    if not path.is_file():
+        raise SigningError("The signing certificate file is missing; sign in again or re-import the certificate.")
+    data = path.read_bytes()
+    loaded = None
+    for secret in ([password.encode()] if password else [b"", None]):  # "" may mean a p12 made without one
+        try:
+            loaded = pkcs12.load_key_and_certificates(data, secret)
+            break
+        except (ValueError, UnsupportedAlgorithm):
+            continue
+    if loaded is None or loaded[0] is None or loaded[1] is None:
+        raise SigningError("The signing identity could not be read: wrong password or damaged .p12 file.")
+    key, cert, others = loaded
+    one_time = secrets.token_urlsafe(24)
+    blob = pkcs12.serialize_key_and_certificates(
+        b"EZSide", key, cert, others or None, serialization.BestAvailableEncryption(one_time.encode())
+    )
+    target = folder / "identity.p12"
+    target.write_bytes(blob)
+    return str(target), one_time
+
+
 def sign_ipa(
     input_ipa: str,
     output_ipa: str,
@@ -151,8 +216,6 @@ def sign_ipa(
     zsign = resolve_zsign()
     cmd = [
         zsign,
-        "-k", p12_path,
-        "-p", p12_password,
         "-m", profile_path,
         "-z", str(zip_level),
         "-o", output_ipa,
@@ -185,7 +248,19 @@ def sign_ipa(
         cmd.append("-P")
     cmd.append(input_ipa)
 
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    # zsign gets a throwaway copy of the identity (see _ephemeral_p12), in its own subfolder
+    # of data_dir()/signing-temp (user-private). A killed engine skips the finally below, so
+    # every sign first sweeps what an earlier killed run left behind.
+    sweep_signing_temp()
+    folder = paths.data_dir() / _TEMP_DIR_NAME
+    folder.mkdir(parents=True, exist_ok=True)
+    ephemeral = Path(tempfile.mkdtemp(prefix="p12-", dir=folder))
+    try:
+        key_path, key_password = _ephemeral_p12(p12_path, p12_password, ephemeral)
+        cmd[1:1] = ["-k", key_path, "-p", key_password]
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+    finally:
+        _discard(ephemeral)
     if proc.returncode != 0:
         raise SigningError(
             f"zsign failed (exit {proc.returncode}):\n{proc.stdout}\n{proc.stderr}"

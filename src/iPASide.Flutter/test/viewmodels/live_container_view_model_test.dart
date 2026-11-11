@@ -235,6 +235,12 @@ class _FakePicker implements FilePickerService {
   @override
   Future<String?> savePairingFile({required String suggestedName}) async =>
       null;
+
+  @override
+  Future<String?> pickCertificate() async => null;
+
+  @override
+  Future<String?> pickProvisioningProfile() async => null;
 }
 
 /// Records what the view model asked, and answers without a navigator.

@@ -754,4 +754,125 @@ void main() {
       );
     });
   });
+
+  // Apps on the imported certificate are never refreshed, so the only thing the
+  // scheduled run can do for them is say, in time, that the user must renew it.
+  group('AutoRefreshRunner imported certificate expiry', () {
+    final DateTime t0 = DateTime.utc(2026, 10, 28, 8);
+
+    EngineResult expiringOf(List<String> refreshedStatuses) => EngineResult(
+          ok: true,
+          data: <String, dynamic>{
+            'refreshed': <dynamic>[
+              for (int i = 0; i < refreshedStatuses.length; i++)
+                <String, dynamic>{
+                  'bundle_id': 'com.app$i',
+                  'status': refreshedStatuses[i],
+                },
+            ],
+            'custom_expiring': <dynamic>[
+              <String, dynamic>{
+                'bundle_id': 'com.seller.one',
+                'name': 'First App',
+                'days_left': 9.6,
+              },
+              <String, dynamic>{
+                'bundle_id': 'com.seller.two',
+                'name': 'Second App',
+                'days_left': -0.5,
+              },
+            ],
+          },
+        );
+
+    Future<int> expiringRun(
+      DateTime at, {
+      List<String> refreshed = const <String>[],
+      bool gui = false,
+      void Function(String title, String message)? onNotice,
+    }) =>
+        AutoRefreshRunner.run(
+          guiRunning: () => gui,
+          paths: paths,
+          settings: _FakeSettings(),
+          transport: _FakeRunner(outcome: expiringOf(refreshed)),
+          notice: onNotice ?? notice,
+          now: () => at,
+        );
+
+    test('warns once, naming the apps and days left, and exits 0', () async {
+      final int code = await expiringRun(t0);
+
+      expect(code, 0, reason: 'an expiry warning is not a failed refresh');
+      expect(notices, hasLength(1));
+      final String text = notices.single.$2;
+      expect(notices.single.$1, 'EZSide');
+      expect(text, contains('First App: 9 days left'));
+      expect(text, contains('Second App: expired'));
+      expect(text, contains('seller'));
+      expect(text, contains('Account page'));
+      expect(text, contains('First App: còn 9 ngày'));
+      expect(text, isNot(contains('could not refresh')));
+      // A new certificate only helps once the apps are re-signed with it: the
+      // last step names the Account page button, in both languages.
+      expect(
+        '"Re-sign all apps with this certificate"'.allMatches(text),
+        hasLength(2),
+      );
+      // Second App is already past its date, so "about to" would be wrong.
+      expect(text, contains('has expired'));
+      expect(text, contains('đã hết hạn. Các ứng dụng này đã ngừng mở'));
+      expect(text, isNot(contains('about to expire')));
+    });
+
+    test('says "about to expire" while every app still opens', () {
+      final String text = AutoRefreshRunner.expiryText(
+        const <CustomExpiringApp>[
+          CustomExpiringApp(name: 'First App', daysLeft: 9.6),
+          CustomExpiringApp(name: 'Last Hours', daysLeft: 0.3),
+        ],
+      );
+
+      expect(text, contains('is about to expire'));
+      expect(text, contains('Chứng chỉ bạn đã nhập sắp hết hạn'));
+      expect(text, contains('Last Hours: under a day left'));
+      expect(text, isNot(contains('has expired')));
+    });
+
+    test('is shown at most once per 20 hours', () async {
+      await expiringRun(t0);
+      await expiringRun(t0.add(const Duration(hours: 19)));
+      expect(notices, hasLength(1));
+
+      await expiringRun(t0.add(const Duration(hours: 20)));
+      expect(notices, hasLength(2));
+    });
+
+    test('shows with the GUI open, and leaves the failure stamp alone',
+        () async {
+      await expiringRun(t0, gui: true);
+
+      expect(notices, hasLength(1));
+      expect(File(paths.autoRefreshNoticeStampPath).existsSync(), isFalse);
+      expect(AutoRefreshRunner.claimNotice(paths: paths, now: t0), isTrue);
+    });
+
+    test('a failure in the same run shares one box and keeps exit 1', () async {
+      final int code = await expiringRun(t0, refreshed: <String>['error']);
+
+      expect(code, 1);
+      expect(notices, hasLength(1));
+      expect(notices.single.$2, contains('could not refresh 1 app(s)'));
+      expect(notices.single.$2, contains('First App'));
+    });
+
+    test('a warning that cannot be shown leaves the exit code at 0', () async {
+      final int code = await expiringRun(
+        t0,
+        onNotice: (String title, String message) => throw StateError('no ui'),
+      );
+
+      expect(code, 0);
+    });
+  });
 }

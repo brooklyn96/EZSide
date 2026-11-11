@@ -84,9 +84,9 @@ String describeEngineExit({
     if (line.isEmpty) {
       continue;
     }
-    line = line.replaceAll(
-      RegExp('IPASIDE_APPLE_PASSWORD=\\S+'),
-      'IPASIDE_APPLE_PASSWORD=(redacted)',
+    line = line.replaceAllMapped(
+      RegExp('(IPASIDE_APPLE_PASSWORD|IPASIDE_CERT_PASSWORD)=\\S+'),
+      (Match m) => '${m[1]}=(redacted)',
     );
     if (line.length > 240) {
       line = '${line.substring(0, 240)}…';

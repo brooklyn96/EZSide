@@ -234,6 +234,17 @@ void main() {
       expect(text, contains('Windows fatal exception'));
     });
 
+    test('redacts the certificate password too', () {
+      final String text = describeEngineExit(
+        headline: 'engine exited unexpectedly',
+        exitCode: 1,
+        stderrLines: <String>['env IPASIDE_CERT_PASSWORD=p12-s3cret set'],
+      );
+
+      expect(text, contains('IPASIDE_CERT_PASSWORD=(redacted)'));
+      expect(text, isNot(contains('p12-s3cret')));
+    });
+
     test('says when the pipe closed but the process had not exited', () {
       expect(
         describeEngineExit(
